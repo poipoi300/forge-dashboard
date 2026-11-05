@@ -50,8 +50,9 @@ def test_worst_signal_wins_and_every_reason_is_explained() -> None:
     messages = [reason.message for reason in summary.health.reasons]
     assert "CI failing: CI" in messages
     assert "local checks passed but are stale against HEAD" in messages
-    assert "3 standards checks failing" in messages
-    assert [item.level for item in summary.attention] == ["bad", "warn", "warn"]
+    assert "3 of 13 standards checks not met" in messages
+    # Stale checks and standards drift are warnings, not decisions: only the CI failure needs attention.
+    assert [(item.source, item.level) for item in summary.attention] == [("ci", "bad")]
 
 
 def test_invalid_manifest_and_crashed_services_fail_health() -> None:

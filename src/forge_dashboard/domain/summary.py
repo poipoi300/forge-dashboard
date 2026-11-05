@@ -571,7 +571,7 @@ def health_reasons(facts: ProjectFacts) -> list[HealthReason]:
         reasons.append(HealthReason(source="manifest", level=HealthLevel.FAILING, message=message))
     if facts.standards is not None and facts.standards.total and facts.standards.passing < facts.standards.total:
         failing_count = facts.standards.total - facts.standards.passing
-        message = f"{failing_count} standards check{'s' if failing_count != 1 else ''} failing"
+        message = f"{failing_count} of {facts.standards.total} standards checks not met"
         reasons.append(HealthReason(source="standards", level=HealthLevel.WARN, message=message))
     if facts.services is not None:
         crashed = [s.label for s in facts.services.services if s.state in _FAILED_SERVICE_STATES]
@@ -603,13 +603,16 @@ def last_change(git: GitFacts | None) -> LastChange:
 
 
 def attention_items(facts: ProjectFacts, health: Health) -> list[AttentionItem]:
-    """What needs the maintainer: failing health reasons plus parked syncs and unpushed work."""
+    """What needs a decision now: failing health reasons, parked syncs, and a blocked status.
+
+    Warnings (standards drift, checks stale against HEAD) stay in the health
+    rollup and their own signals; they are a standing backlog, and counting
+    them here would flag nearly every project and rank nothing.
+    """
     items = [
-        AttentionItem(
-            source=reason.source, level="bad" if reason.level is HealthLevel.FAILING else "warn", message=reason.message
-        )
+        AttentionItem(source=reason.source, level="bad", message=reason.message)
         for reason in health.reasons
-        if reason.level in (HealthLevel.FAILING, HealthLevel.WARN)
+        if reason.level is HealthLevel.FAILING
     ]
     if facts.fork is not None and facts.fork.last_sync in ("conflict", "needs-attention", "ready-to-apply", "failed"):
         level: Literal["warn", "bad"] = "bad" if facts.fork.last_sync in ("conflict", "failed") else "warn"
