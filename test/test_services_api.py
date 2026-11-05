@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from forge_dashboard.api.app import create_app
+from forge_dashboard.api.app import create_app, require_output_fields
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import JobRef, NoInput, Service, action
 
@@ -139,6 +139,40 @@ def test_openapi_carries_every_action_and_the_stream_models(client: TestClient) 
     assert {"HelloMessage", "StateMessage", "EventMessage", "EchoInput", "GalleryConfig"} <= set(
         document["components"]["schemas"]
     )
+
+
+def test_output_only_schemas_require_every_field_and_input_schemas_do_not(client: TestClient) -> None:
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    # GalleryState is only ever returned; EchoInput is only ever sent.
+    assert set(schemas["GalleryState"]["required"]) == set(schemas["GalleryState"]["properties"])
+    assert "shout" not in schemas["EchoInput"].get("required", [])
+    assert set(schemas["HelloMessage"]["required"]) == set(schemas["HelloMessage"]["properties"])
+
+
+def test_required_output_fields_leave_schemas_shared_with_inputs_alone() -> None:
+    document: dict[str, Any] = {
+        "paths": {
+            "/a": {
+                "post": {
+                    "requestBody": {
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Shared"}}}
+                    },
+                    "responses": {
+                        "200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Out"}}}}
+                    },
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "Shared": {"properties": {"x": {"type": "integer", "default": 1}}},
+                "Out": {"properties": {"shared": {"$ref": "#/components/schemas/Shared"}, "y": {"type": "integer"}}},
+            }
+        },
+    }
+    require_output_fields(document, extra_outputs=[])
+    assert document["components"]["schemas"]["Out"]["required"] == ["shared", "y"]
+    assert "required" not in document["components"]["schemas"]["Shared"]
 
 
 class _Broken(Service[NoInput, NoInput]):

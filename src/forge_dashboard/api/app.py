@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -61,6 +61,57 @@ class EventMessage(BaseModel):
 STREAM_MODELS: tuple[type[BaseModel], ...] = (HelloMessage, StateMessage, EventMessage)
 
 RouteInstaller = Callable[[APIRouter, Runtime], None]
+
+_SCHEMA_REF = "#/components/schemas/"
+
+
+def _refs(node: object) -> Iterator[str]:
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith(_SCHEMA_REF):
+            yield ref.removeprefix(_SCHEMA_REF)
+        for value in node.values():
+            yield from _refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _refs(value)
+
+
+def _closure(schemas: dict[str, Any], roots: Iterable[str]) -> set[str]:
+    seen: set[str] = set()
+    pending = list(roots)
+    while pending:
+        name = pending.pop()
+        if name in seen or name not in schemas:
+            continue
+        seen.add(name)
+        pending.extend(_refs(schemas[name]))
+    return seen
+
+
+def require_output_fields(document: dict[str, Any], *, extra_outputs: Iterable[str]) -> None:
+    """Mark every field required on schemas that only ever describe server output.
+
+    pydantic serializes every field, defaulted or not, so a response always
+    carries them; its serialization-mode JSON Schema still leaves defaulted
+    fields optional, which would make generated clients guard values that
+    are always present. Schemas also reachable from a request body or
+    parameter keep their optional fields, because clients may omit those.
+    """
+    schemas: dict[str, Any] = document.get("components", {}).get("schemas", {})
+    inputs: list[str] = []
+    outputs: list[str] = list(extra_outputs)
+    for operations in document.get("paths", {}).values():
+        for operation in operations.values():
+            if not isinstance(operation, dict):
+                continue
+            inputs.extend(_refs(operation.get("requestBody", {})))
+            inputs.extend(_refs(operation.get("parameters", [])))
+            outputs.extend(_refs(operation.get("responses", {})))
+    for name in _closure(schemas, outputs) - _closure(schemas, inputs):
+        schema = schemas[name]
+        if isinstance(schema.get("properties"), dict):
+            schema["required"] = list(schema["properties"])
 
 
 def _typed_endpoint(
@@ -259,6 +310,7 @@ def create_app(
                 [(model, "serialization") for model in STREAM_MODELS], ref_template="#/components/schemas/{model}"
             )
             document.setdefault("components", {}).setdefault("schemas", {}).update(extra.get("$defs", {}))
+            require_output_fields(document, extra_outputs=[model.__name__ for model in STREAM_MODELS])
             app.openapi_schema = document
         return app.openapi_schema
 
