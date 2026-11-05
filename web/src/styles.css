@@ -1,0 +1,361 @@
+@import "tailwindcss";
+@import "@fontsource-variable/archivo/wdth.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
+@import "react-diff-view/style/index.css";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant compact (&:where([data-density="compact"] *));
+
+/*
+ * Swiss railway information design, held to an operating screen:
+ * a dark departure board owns the rail and the departures strip in both
+ * themes, paper or night ground carries the work, signal red marks only
+ * delays and failures, and one grotesk with a width axis sets interface text
+ * at normal width and every time and count condensed and tabular.
+ */
+:root {
+  color-scheme: light;
+  --paper: #f2f3f5;
+  --surface: #ffffff;
+  --surface-sunk: #f7f8f9;
+  --ink: #10131a;
+  --ink-2: #444b59;
+  --ink-3: #636a78;
+  --rule: #dde0e6;
+  --rule-strong: #b9bec8;
+  --hover: #eceef2;
+  --select: #e3ebfb;
+
+  --board: #101a2f;
+  --board-2: #19253f;
+  --board-3: #24324f;
+  --board-ink: #f3f5f9;
+  --board-ink-2: #a9b4ca;
+  --board-rule: #2a3755;
+
+  --signal: #d40011;
+  --signal-ink: #b5000e;
+  --signal-wash: #fde8ea;
+  --amber: #f0a500;
+  --amber-ink: #855700;
+  --amber-wash: #fdf2d8;
+  --clear: #0a8a43;
+  --clear-ink: #06703a;
+  --clear-wash: #e2f4ea;
+  --info: #1f56c7;
+  --info-ink: #1a49aa;
+  --info-wash: #e5ecfb;
+  --idle: #8b919e;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: #ffffff;
+  --secondary: var(--hover);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-sunk);
+  --muted-foreground: var(--ink-3);
+  --accent: var(--hover);
+  --accent-foreground: var(--ink);
+  --destructive: var(--signal);
+  --border: var(--rule);
+  --input: var(--rule-strong);
+  --ring: var(--info);
+  --radius: 4px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0b0d11;
+  --surface: #13161c;
+  --surface-sunk: #0f1217;
+  --ink: #eceef2;
+  --ink-2: #b1b7c3;
+  --ink-3: #8f96a3;
+  --rule: #262b34;
+  --rule-strong: #3a414d;
+  --hover: #1c2028;
+  --select: #1b2a48;
+
+  --board: #0d1526;
+  --board-2: #152038;
+  --board-3: #1f2c49;
+  --board-ink: #eef1f7;
+  --board-ink-2: #9aa6bd;
+  --board-rule: #233050;
+
+  --signal: #ff4a52;
+  --signal-ink: #ff6a71;
+  --signal-wash: #3a1316;
+  --amber: #f5b82e;
+  --amber-ink: #f5c25a;
+  --amber-wash: #33270d;
+  --clear: #34c26f;
+  --clear-ink: #4cd081;
+  --clear-wash: #10291b;
+  --info: #7aa2ff;
+  --info-ink: #93b4ff;
+  --info-wash: #16223d;
+  --idle: #6f7684;
+
+  --primary-foreground: #0b0d11;
+}
+
+@theme inline {
+  --font-sans: "Archivo Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.05rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.2rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.3rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.4rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.6rem;
+
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-sunk: var(--surface-sunk);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-hover: var(--hover);
+  --color-select: var(--select);
+  --color-board: var(--board);
+  --color-board-2: var(--board-2);
+  --color-board-3: var(--board-3);
+  --color-board-ink: var(--board-ink);
+  --color-board-ink-2: var(--board-ink-2);
+  --color-board-rule: var(--board-rule);
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
+  --color-signal-wash: var(--signal-wash);
+  --color-amber: var(--amber);
+  --color-amber-ink: var(--amber-ink);
+  --color-amber-wash: var(--amber-wash);
+  --color-clear: var(--clear);
+  --color-clear-ink: var(--clear-ink);
+  --color-clear-wash: var(--clear-wash);
+  --color-info: var(--info);
+  --color-info-ink: var(--info-ink);
+  --color-info-wash: var(--info-wash);
+  --color-idle: var(--idle);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: 3px;
+  --radius-md: var(--radius);
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+}
+
+@layer base {
+  * {
+    border-color: var(--rule);
+  }
+  html {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    caret-color: var(--info);
+  }
+  ::selection {
+    background: var(--info);
+    color: #ffffff;
+  }
+  :focus-visible {
+    outline: 2px solid var(--info);
+    outline-offset: 2px;
+  }
+  a {
+    text-underline-offset: 3px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule-strong) transparent;
+  }
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer utilities {
+  /* Times, counts, and columns: condensed and tabular, the departure board's numerals. */
+  .figures {
+    font-stretch: 72%;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
+  /* Large standalone numbers keep proportional figures, condensed. */
+  .figures-open {
+    font-stretch: 78%;
+    font-variant-numeric: proportional-nums;
+    letter-spacing: -0.01em;
+  }
+  .condensed {
+    font-stretch: 84%;
+  }
+}
+
+/* Markdown from READMEs, issues, notes, and transcripts: the interface's own type, not an article's. */
+.prose-board {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.prose-board > * + * {
+  margin-top: 0.6em;
+}
+.prose-board :where(h1, h2, h3, h4) {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+  margin-top: 1.1em;
+}
+.prose-board > :where(h1, h2, h3, h4):first-child {
+  margin-top: 0;
+}
+.prose-board h1 {
+  font-size: var(--text-lg);
+}
+.prose-board h2 {
+  font-size: var(--text-base);
+}
+.prose-board :where(h3, h4) {
+  font-size: var(--text-sm);
+}
+.prose-board :where(ul, ol) {
+  padding-left: 1.25em;
+}
+.prose-board ul {
+  list-style: disc;
+}
+.prose-board ol {
+  list-style: decimal;
+}
+.prose-board li + li {
+  margin-top: 0.2em;
+}
+.prose-board a {
+  color: var(--info-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+.prose-board :not(pre) > code {
+  font-size: 0.92em;
+  background: var(--hover);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+}
+.prose-board pre {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  background: var(--surface-sunk);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+}
+.prose-board blockquote {
+  border-left: 2px solid var(--rule-strong);
+  padding-left: 0.75em;
+  color: var(--ink-2);
+}
+.prose-board table {
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+.prose-board :where(th, td) {
+  border: 1px solid var(--rule);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+.prose-board img {
+  max-width: 100%;
+}
+.prose-board hr {
+  border-color: var(--rule);
+}
+
+/* Diffs: inserts in the clear wash, deletes in the signal wash, gutters one step stronger. */
+.diff-board {
+  --diff-background-color: var(--surface);
+  --diff-text-color: var(--ink);
+  --diff-font-family: var(--font-mono);
+  --diff-selection-background-color: var(--select);
+  --diff-gutter-insert-background-color: color-mix(in oklab, var(--clear-wash), var(--clear) 14%);
+  --diff-gutter-delete-background-color: color-mix(in oklab, var(--signal-wash), var(--signal) 14%);
+  --diff-code-insert-background-color: var(--clear-wash);
+  --diff-code-delete-background-color: var(--signal-wash);
+  --diff-code-insert-edit-background-color: color-mix(
+    in oklab,
+    var(--clear-wash),
+    var(--clear) 30%
+  );
+  --diff-code-delete-edit-background-color: color-mix(
+    in oklab,
+    var(--signal-wash),
+    var(--signal) 30%
+  );
+  --diff-omit-gutter-line-color: var(--signal);
+}
+.diff-board .diff-line {
+  font-size: var(--text-2xs);
+}
+.diff-board .diff-gutter {
+  color: var(--ink-3);
+}
+.diff-board .diff-hunk-header {
+  background: var(--surface-sunk);
+  color: var(--ink-3);
+  font-size: var(--text-2xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion has to beat every component's own transition */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion has to beat every component's own transition */
+    transition-duration: 0.01ms !important;
+  }
+}
