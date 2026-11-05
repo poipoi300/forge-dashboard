@@ -112,7 +112,7 @@ Python runs through `uv`; the frontend through Bun from `web/`. Never invoke
 | Format | `uv run ruff format .` · `bun run --cwd web biome check --write .` |
 | Lint | `uv run ruff check .` · `bun run --cwd web biome check .` |
 | Types | `uv run mypy .` · `bun run --cwd web tsc --noEmit -p .` |
-| Regenerate API types | `uv run forge-dashboard openapi > web/openapi.json` then `bun run --cwd web gen:api` |
+| Regenerate API types and web fixtures | `bun run --cwd web gen:api` (writes `web/openapi.json`, `web/test/fixtures/services.json`, `web/src/api/schema.d.ts`; tests fail when they are stale) |
 | Regenerate manifest schema | `uv run forge-dashboard manifest schema > schema/forge.project.schema.json` |
 | All commit-stage gates | `uv run pre-commit run --all-files` |
 | Push-stage gate | `bash tools/stack_coverage_gate.sh` (needs `origin/main`; locally override with `DIFF_COVER_COMPARE_BRANCH=<root commit>`) |
@@ -138,7 +138,17 @@ run instead of iterating against the gates.
   - `runner/` — the Textual TUI runner; `api/` — the FastAPI app factory.
   - `gates.py` — the registry.
 - `web/` — the React + TypeScript frontend (Bun, Tailwind v4, shadcn/ui).
-  `web/src/schema/` is the generic schema renderer.
+  - `src/api/` — typed client, the live state stream, react-query hooks,
+    generated `schema.d.ts`.
+  - `src/schema/` — the generic renderer: views, forms, widgets, and the one
+    action dialog every button and the command palette share.
+  - `src/features/` — pages: `overview/`, `project/` (one file per tab),
+    `jobs/`, `fleet/`, `activity/`, `settings/`.
+  - `src/app/` — shell, departures board, routes, palette, preferences.
+  - `src/components/` — shared primitives; `components/ui/` is shadcn.
+  - `test/` — Bun tests; `test/fixtures/` holds generated descriptors.
+- `scripts/` — this repo's own manifest metrics and custom action (not
+  template material).
 - `schema/forge.project.schema.json` — generated manifest schema.
 - `tools/` — gate scripts. `repo_hygiene.py` and `coverage_gate.sh` are
   verbatim from forge; `stack_coverage_gate.sh` extends the push gate to both

@@ -33,7 +33,7 @@ done = true
 id = "supervisor-runner"
 title = "Process module, supervisor, TUI runner, launchers"
 weight = 3
-done = false
+done = true
 
 [[v1.milestones]]
 id = "services-api"

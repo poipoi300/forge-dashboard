@@ -95,6 +95,80 @@ to their section.
   "never two checks in one repo" are both this mechanism. `ATTENTION` is a
   terminal job status for work that finished but parked for the user.
 - **x-ui extensions** beyond the spec vocabulary: `bind` (fill from page
-  context, e.g. the current project), `tones` (per-enum tone for badges,
-  always paired with text), `min`/`max`/`step` (sliders), `short_label`
-  (dense headers), `slot` (overview card placement).
+  context, e.g. the current project), `tones` (per-enum tone for badges and
+  boolean flags, always paired with text), `min`/`max`/`step` (sliders),
+  `short_label` (dense headers; `""` leaves a value unlabelled), `slot`
+  (overview card placement), `hide_zero` (leave zero counts out of dense
+  views), and the `markdown` display format. `columns` also applies to an
+  object-valued field: it picks the sub-fields a dense view shows.
+- **Two composite object formats.** `format: "progress"` reads `done`,
+  `total`, `caption`, and an optional `detail` line; `format: "badge"` on an
+  object reads `level` and lists the remaining fields on hover. A dense
+  boolean reads as a flag: its label when true, nothing when false.
+- **Output-only OpenAPI schemas require every field.** pydantic serializes
+  every field, but its serialization-mode schema leaves defaulted ones
+  optional, so generated TypeScript guarded values that are always present.
+  `require_output_fields` marks every property required on schemas reachable
+  only from responses and the stream; schemas shared with request bodies keep
+  their optional fields.
+- **Generated artifacts are pinned by tests.** `web/openapi.json` and the
+  descriptor fixture `web/test/fixtures/services.json` are written by
+  `bun run gen:api` (LF endings) and compared to the live app in pytest, so a
+  backend change that forgets to regenerate fails the suite.
+- **The events service registers first.** It subscribes to the bus in
+  `start()`, so registering it first means no later service can publish
+  before the subscription exists, and it stops last. A notification's kind is
+  derived from the declared event classes' `notify_kind` rather than stored.
+- **Restore is phased.** Stop every service, restore the database, reload
+  every config, start every service, after writing a safety backup; this
+  keeps `Runtime`'s rule that all configs load before any `start()`.
+- **Build output is offered for cleanup only when git tracks nothing inside
+  it**, so a committed `dist/` is never deleted.
+- **Per-project overrides live in dashboard state.** Check schedules, fork
+  policies, editor commands, hidden flags, and metric interval overrides are
+  kv entries keyed by project id; the manifest stays the default and is never
+  written by these settings.
+
+## Projects, launch, and logs
+
+- **Launch instructions.** `projects.launch-guide` returns
+  `[launch].instructions` (inline markdown, or a repo-relative `.md` path
+  that must resolve inside the project), else the README's first setup or run
+  heading outside code fences up to the next heading of the same level. The
+  standards check "README has a setup or run section" uses the same rule.
+- **Service logs read by absolute line number.** Offsets into the 2000-line
+  ring buffer stopped advancing once it filled; the supervisor counts lines
+  ever written, and readers pass that cursor back.
+- **Check facts carry one result.** `not run yet`, `running`, `passing`, or
+  `failing`, so a card can say "tests passing" without reading counts.
+
+## WebUI
+
+- **Design direction.** Swiss railway station information design (direction
+  contract in `.impeccable/surfaces/`, system in `DESIGN.md`): a dark
+  departure board owns the rail and the departures strip in both themes,
+  signal red marks only failures and delays, and Archivo's width axis sets
+  every time and count condensed and tabular. impeccable's interactive steps
+  (picking a direction, approving comps) were answered from the spec, and the
+  build is code-led: no generated imagery.
+- **Self-building layouts.** The overview card places `ProjectSummary`
+  fields by their `slot` hint and renders each through the schema renderer,
+  and the table takes its default columns from `ProjectsState.projects`;
+  settings forms come from each service's config schema; every action dialog
+  comes from the action's input schema. A field added on the backend appears
+  without a frontend edit.
+- **One action dialog host.** Buttons, menus, and the command palette all call
+  `useActionRunner`; a single `ActionDialogHost` owns the dialog, so a dialog
+  outlives the menu that opened it. `input` fixes fields; `defaults` prefills
+  fields the user may still edit (current settings).
+- **Live queries follow service revisions.** `useAction(path, input,
+  {live, follow})` keys react-query on the owning services' state revisions,
+  so read-only views refetch when the server changes, with no polling and no
+  second cache. The previous answer is kept while refetching, but never
+  across a different input.
+- **The URL is the view.** Overview search, filters, sort, and grouping live
+  in the query string; a project's tab and a job's id live in the path; the
+  production build uses absolute asset URLs so deep links load.
+- **Preferences stay in the browser.** Theme, density, layout, saved views,
+  and table columns persist in `localStorage`; favourites and status markers
+  are server state because other surfaces (the CLI, reports) read them.
