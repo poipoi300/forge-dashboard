@@ -444,8 +444,21 @@ def openapi_text() -> str:
     return json.dumps(document, indent=2) + "\n"
 
 
-def _openapi(output: Path | None) -> int:
-    text = openapi_text()
+def descriptors_text() -> str:
+    """Every service's descriptor as served by `GET /api/services`, for the web test fixtures."""
+    from pydantic import TypeAdapter
+
+    from forge_dashboard.container import build_runtime
+    from forge_dashboard.core.descriptors import ServiceDescriptor, describe
+
+    with tempfile.TemporaryDirectory(prefix="forge-dashboard-descriptors-") as scratch:
+        runtime = build_runtime(DataPaths(root=Path(scratch)))
+        descriptors = [describe(service) for service in runtime.services.values()]
+    payload = TypeAdapter(list[ServiceDescriptor]).dump_python(descriptors, mode="json", by_alias=True)
+    return json.dumps(payload, indent=2) + "\n"
+
+
+def _write_or_print(text: str, output: Path | None) -> int:
     if output is None:
         sys.stdout.write(text)
     else:
@@ -485,6 +498,8 @@ def build_parser() -> argparse.ArgumentParser:
     sync.set_defaults(handler=_sync)
     openapi = commands.add_parser("openapi", help="print the API's OpenAPI document as JSON")
     openapi.add_argument("--output", type=Path, help="write it to this file (LF line endings) instead of stdout")
+    descriptors = commands.add_parser("descriptors", help="print every service descriptor as JSON")
+    descriptors.add_argument("--output", type=Path, help="write it to this file (LF line endings) instead of stdout")
 
     manifest = commands.add_parser("manifest", help="validate manifests or print the manifest JSON Schema")
     manifest_commands = manifest.add_subparsers(dest="manifest_command", required=True)
@@ -501,7 +516,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _manifest_validate(args.path)
         return _manifest_schema()
     if args.command == "openapi":
-        return _openapi(args.output)
+        return _write_or_print(openapi_text(), args.output)
+    if args.command == "descriptors":
+        return _write_or_print(descriptors_text(), args.output)
     try:
         return asyncio.run(_with_backend(args.handler, args))
     except CliError as error:

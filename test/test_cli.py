@@ -26,6 +26,7 @@ from forge_dashboard.cli import (
     InProcessBackend,
     ago,
     color_enabled,
+    descriptors_text,
     exit_code_for,
     main,
     openapi_text,
@@ -561,4 +562,22 @@ def test_the_committed_web_openapi_document_matches_the_api() -> None:
 
     assert json.loads(committed.read_text(encoding="utf-8")) == json.loads(openapi_text()), (
         "web/openapi.json is stale: run `bun run gen:api` in web/"
+    )
+
+
+def test_descriptors_prints_every_service_with_event_schemas_by_alias(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["descriptors"]) == 0
+
+    descriptors = json.loads(capsys.readouterr().out)
+    ids = {descriptor["id"] for descriptor in descriptors}
+    assert {"projects", "jobs", "events", "settings", "actions", "gallery"} <= ids
+    jobs = next(descriptor for descriptor in descriptors if descriptor["id"] == "jobs")
+    assert all("schema" in event for event in jobs["events"])
+
+
+def test_the_committed_web_descriptor_fixture_matches_the_services() -> None:
+    committed = Path(__file__).resolve().parents[1] / "web" / "test" / "fixtures" / "services.json"
+
+    assert json.loads(committed.read_text(encoding="utf-8")) == json.loads(descriptors_text()), (
+        "web/test/fixtures/services.json is stale: run `bun run gen:api` in web/"
     )
