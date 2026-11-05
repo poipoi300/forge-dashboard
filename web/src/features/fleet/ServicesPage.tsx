@@ -9,6 +9,7 @@ import { StatusMark } from "@/components/status";
 import { bytes, percent } from "@/lib/format";
 import { ActionButton } from "@/schema/ActionButton";
 import type { Tone } from "@/schema/schema";
+import { useProjectLabel } from "../project/names";
 
 const STATE_TONE: Record<string, Tone> = {
   running: "good",
@@ -53,9 +54,7 @@ function Gauge({
 export function ServicesPage() {
   const services = useServiceState("services");
   const machine = useServiceState("machine");
-  const projects = useServiceState("projects")?.projects ?? [];
-  const nameOf = (id: string | null) =>
-    id ? (projects.find((project) => project.id === id)?.name ?? id) : null;
+  const nameOf = useProjectLabel();
   const list = services?.services ?? [];
   const live = list.filter((service) => service.state !== "stopped");
 

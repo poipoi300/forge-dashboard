@@ -9,13 +9,13 @@ import { EmptyState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
 import { cn } from "@/lib/utils";
 import { ActionButton } from "@/schema/ActionButton";
+import { useProjectLabel } from "../project/names";
 import { ForkRunState, ParkedRunActions } from "../project/tabs/ForkTab";
 
 export function ForksPage() {
   const forks = useServiceState("forks")?.forks ?? [];
   const scheduler = useServiceState("scheduler");
-  const projects = useServiceState("projects")?.projects ?? [];
-  const nameOf = (id: string) => projects.find((project) => project.id === id)?.name ?? id;
+  const nameOf = useProjectLabel();
   const tracked = forks.filter((fork) => fork.is_fork || fork.upstream_url);
   const parked = tracked.filter(
     (fork) =>

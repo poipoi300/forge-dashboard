@@ -14,6 +14,19 @@ import type { TabProps } from "../ProjectPage";
 
 type Display = "number" | "percent" | "duration" | "bytes" | "text" | "status";
 
+/** A failed reading: its first line, with the full output one click away. */
+export function ReadingError({ error }: { error: string }) {
+  const first = error.split(/\r?\n/, 1)[0] ?? error;
+  return (
+    <details className="text-signal-ink">
+      <summary className="cursor-pointer truncate">{first}</summary>
+      <pre className="mt-1 max-h-60 overflow-auto rounded-sm bg-surface-sunk px-2 py-1 font-mono text-2xs whitespace-pre-wrap text-ink-2">
+        {error}
+      </pre>
+    </details>
+  );
+}
+
 function MetricHistory({
   projectId,
   metricId,
@@ -36,17 +49,17 @@ function MetricHistory({
     <QueryState query={history}>
       {(data) => {
         const numeric = data.points.filter((point) => typeof point.value === "number");
-        if (!numeric.length) {
+        if (numeric.length < 2) {
           const recent = data.points.slice(-6).reverse();
           return recent.length ? (
             <ul className="flex flex-col gap-0.5 text-xs">
               {recent.map((point) => (
                 <li key={point.read_at} className="flex justify-between gap-2">
-                  <span>
+                  <span className="min-w-0">
                     {point.error ? (
-                      <span className="text-signal-ink">{point.error}</span>
+                      <ReadingError error={point.error} />
                     ) : (
-                      String(point.value)
+                      formatMetric({ display, unit, value: point.value })
                     )}
                   </span>
                   <span className="text-2xs text-ink-3">
@@ -58,6 +71,7 @@ function MetricHistory({
           ) : (
             <p className="text-xs text-ink-3">No readings yet.</p>
           );
+          // A chart needs two numeric readings; until then the list above stands in.
         }
         return (
           <TrendChart

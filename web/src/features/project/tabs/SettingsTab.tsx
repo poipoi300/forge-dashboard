@@ -98,7 +98,7 @@ export function SettingsTab({ project, detail }: TabProps) {
               description="How often each metric is read; unlisted ones use the manifest's interval."
             />
           ) : null}
-          {fork && (fork.is_fork || project.git?.has_upstream_remote) ? (
+          {fork && detail.is_git ? (
             <SettingRow
               projectId={project.id}
               service="forks"

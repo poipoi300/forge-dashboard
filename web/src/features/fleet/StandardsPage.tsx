@@ -7,10 +7,12 @@ import { Meter, RelativeTime } from "@/components/data";
 import { EmptyState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
 import { ActionButton } from "@/schema/ActionButton";
+import { useProjectLabel } from "../project/names";
 
 export function StandardsPage() {
   const standards = useServiceState("standards");
   const projects = useServiceState("projects")?.projects ?? [];
+  const nameOf = useProjectLabel();
   const rows = (standards?.projects ?? [])
     .map((entry) => ({
       entry,
@@ -63,7 +65,7 @@ export function StandardsPage() {
                           href={`/p/${project.id}/standards`}
                           className="font-medium hover:underline"
                         >
-                          {project.name}
+                          {nameOf(project.id)}
                         </Link>
                         {project.role === "unmanifested" ? (
                           <span className="block text-2xs text-amber-ink">no manifest</span>

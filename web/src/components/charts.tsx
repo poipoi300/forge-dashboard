@@ -26,8 +26,9 @@ function niceStep(span: number, ticks: number): number {
 
 export function niceTicks(min: number, max: number, count = 4): number[] {
   if (min === max) {
+    // A flat series gets a band around its value; a non-negative one never dips below zero.
     const pad = Math.abs(min) || 1;
-    return niceTicks(min - pad, max + pad, count);
+    return niceTicks(min >= 0 ? Math.max(0, min - pad) : min - pad, max + pad, count);
   }
   const step = niceStep(max - min, count);
   const start = Math.floor(min / step) * step;

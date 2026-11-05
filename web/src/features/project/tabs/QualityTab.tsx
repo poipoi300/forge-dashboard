@@ -32,11 +32,13 @@ const OUTCOME_TONE: Record<string, Tone> = {
   skipped: "neutral",
 };
 
+const OUTCOME_LABEL: Record<string, string> = { never: "not run yet" };
+
 export function Outcome({ value }: { value: string }) {
   const tone = OUTCOME_TONE[value] ?? "neutral";
   return (
     <StatusMark tone={tone} strong={tone === "bad"}>
-      {value.replaceAll("_", " ")}
+      {OUTCOME_LABEL[value] ?? value.replaceAll("_", " ")}
     </StatusMark>
   );
 }
@@ -56,37 +58,43 @@ function CheckDetail({ projectId, checkId }: { projectId: string; checkId: strin
   return (
     <div className="grid gap-4 rounded-md border border-rule bg-surface p-3 lg:grid-cols-2">
       <QueryState query={history}>
-        {(data) => (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs text-ink-3">pass rate</span>
-              <span className="figures text-lg font-semibold">
-                {data.pass_rate === null ? "—" : percent(data.pass_rate * 100)}
-              </span>
+        {(data) =>
+          data.points.length === 0 ? (
+            <p className="text-sm text-ink-3">
+              No runs recorded yet. Run it to start its pass rate and duration history.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs text-ink-3">pass rate</span>
+                <span className="figures text-lg font-semibold">
+                  {data.pass_rate === null ? "—" : percent(data.pass_rate * 100)}
+                </span>
+              </div>
+              <RunStrip
+                label="Runs"
+                runs={data.points.map((point) => ({
+                  at: point.ran_at,
+                  passed: point.outcome === "passed",
+                  note: point.sha ?? undefined,
+                }))}
+              />
+              <TrendChart
+                title="Duration per run"
+                points={data.points.map((point) => ({
+                  at: point.ran_at,
+                  value: point.duration_s,
+                  bad: point.outcome !== "passed",
+                  note:
+                    point.tests !== null
+                      ? `${point.tests} tests, ${point.failures ?? 0} failing`
+                      : undefined,
+                }))}
+                format={(value) => duration(value)}
+              />
             </div>
-            <RunStrip
-              label="Runs"
-              runs={data.points.map((point) => ({
-                at: point.ran_at,
-                passed: point.outcome === "passed",
-                note: point.sha ?? undefined,
-              }))}
-            />
-            <TrendChart
-              title="Duration per run"
-              points={data.points.map((point) => ({
-                at: point.ran_at,
-                value: point.duration_s,
-                bad: point.outcome !== "passed",
-                note:
-                  point.tests !== null
-                    ? `${point.tests} tests, ${point.failures ?? 0} failing`
-                    : undefined,
-              }))}
-              format={(value) => duration(value)}
-            />
-          </div>
-        )}
+          )
+        }
       </QueryState>
       <QueryState query={latest}>
         {(data) => (
