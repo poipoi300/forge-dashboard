@@ -63,8 +63,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--static", type=Path, default=DEFAULT_STATIC, help="built UI directory")
+    parser.add_argument("--no-static", action="store_true", help="serve only the API (the dev server serves the UI)")
     args = parser.parse_args(argv)
-    asyncio.run(serve(args.host, args.port, args.static if args.static.is_dir() else None))
+    static = None if args.no_static or not args.static.is_dir() else args.static
+    asyncio.run(serve(args.host, args.port, static))
     return 0
 
 

@@ -292,6 +292,7 @@ class Supervisor:
         log_tag: str = "supervisor",
         on_change: Callable[[], None] | None = None,
         on_event: Callable[[SupervisorEvent], None] | None = None,
+        on_line: Callable[[str, str], None] | None = None,
         spawn: SpawnFn = _spawn,
         run_step: StepFn = _run_step,
         probe: ReadinessProbe | None = None,
@@ -306,6 +307,7 @@ class Supervisor:
         self._tag = f"[{log_tag}]"
         self._on_change = on_change or (lambda: None)
         self._on_event = on_event or (lambda _event: None)
+        self._on_line = on_line or (lambda _service, _line: None)
         self._spawn = spawn
         self._run_step = run_step
         self._probe = probe or default_probe
@@ -613,6 +615,7 @@ class Supervisor:
 
     def _append(self, service: SupervisedService, line: str) -> None:
         service.lines.append(line)
+        self._on_line(service.spec.name, line)
         self._on_change()
 
     def _log(self, service: SupervisedService, message: str) -> None:
