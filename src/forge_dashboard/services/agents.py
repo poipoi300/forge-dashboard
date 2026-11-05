@@ -535,7 +535,7 @@ class AgentsService(Service[AgentsConfig, AgentsState], ProjectListener):
             agent = await self.run_agent(
                 context, kind=run_kind, project_id=record.id, prompt=await prompt_for(worktree.path), cwd=worktree.path
             )
-            run = run.model_copy(update={"agent_run_ids": [agent.run_id]})
+            run = run.model_copy(update={"agent_run_ids": [agent.run_id], "agent_attempts": 1})
             if agent.outcome != "succeeded":
                 run = await self.branch_work.finish(run, record.path, summary="agent run failed", error=agent.outcome)
                 await self._branch_changed(run)

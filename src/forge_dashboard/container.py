@@ -19,6 +19,7 @@ from forge_dashboard.services.manifests import ManifestsService
 from forge_dashboard.services.metrics import MetricsService
 from forge_dashboard.services.projects import ProjectsService
 from forge_dashboard.services.scheduler import SchedulerService
+from forge_dashboard.services.standards import StandardsService
 
 
 def _no_supervised_services(_project_id: str, _service_id: str) -> str | None:
@@ -56,6 +57,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
             metrics,
             agents,
             forks,
+            StandardsService(runtime, projects, jobs, checks, agents),
             MachineService(runtime, projects),
             ForgeRunsService(runtime, projects),
             GalleryService(runtime, jobs),

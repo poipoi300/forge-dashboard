@@ -13,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, JsonValue
+from pydantic import BaseModel, Field
 
 from forge_dashboard import gitops, landing, worktrees
 from forge_dashboard.core.db import Database
@@ -56,6 +56,13 @@ class CheckOutcomeBrief(BaseModel):
     )
 
 
+class Score(BaseModel):
+    """Compliance checks passing out of applicable."""
+
+    passing: int
+    total: int
+
+
 class BranchRun(BaseModel):
     id: int = Field(json_schema_extra=ui(hidden=True))
     project_id: str
@@ -76,7 +83,12 @@ class BranchRun(BaseModel):
     diffstat: str = Field("", json_schema_extra=ui(format="code"))
     pr_url: str | None = Field(None, json_schema_extra=ui(format="url"))
     error: str | None = None
-    details: dict[str, JsonValue] = Field(default_factory=dict, json_schema_extra=ui(hidden=True))
+    agent_attempts: int = Field(0, json_schema_extra=ui(short_label="attempts"))
+    compliance_before: Score | None = None
+    compliance_after: Score | None = None
+    still_failing: list[str] = Field(default_factory=list, json_schema_extra=ui(help="Compliance checks left failing."))
+    deterministic_fixes: list[str] = Field(default_factory=list)
+    hooks_installed: bool | None = None
 
 
 async def unique_branch(repo: Path, wanted: str) -> str:

@@ -63,13 +63,13 @@ done = true
 id = "standards"
 title = "Compliance checks, bring-up flow, adopt, template revision"
 weight = 3
-done = false
+done = true
 
 [[v1.milestones]]
 id = "agents"
 title = "Harness, transcripts, delegate issue, run history, session insight"
 weight = 3
-done = false
+done = true
 
 [[v1.milestones]]
 id = "web-ui"
