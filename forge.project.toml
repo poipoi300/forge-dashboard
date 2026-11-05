@@ -81,7 +81,7 @@ done = false
 id = "project-services"
 title = "Launch and supervise manifest services, external detection, machine view"
 weight = 3
-done = false
+done = true
 
 [[v1.milestones]]
 id = "notifications-runs"

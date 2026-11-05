@@ -70,12 +70,19 @@ class Endpoint:
         """The address a local client should dial: wildcard binds are reached over loopback."""
         return {"0.0.0.0": "127.0.0.1", "::": "::1", "": "127.0.0.1"}.get(self.host, self.host)
 
-    def url(self, path: str = "/") -> str | None:
+    @property
+    def base_url(self) -> str | None:
+        """`http://host:port` with no trailing slash, as exported to dependents."""
         if self.port is None:
             return None
         host = f"[{self.connect_host}]" if ":" in self.connect_host else self.connect_host
-        suffix = path if path.startswith("/") else f"/{path}"
-        return f"http://{host}:{self.port}{suffix}"
+        return f"http://{host}:{self.port}"
+
+    def url(self, path: str = "/") -> str | None:
+        base = self.base_url
+        if base is None:
+            return None
+        return base + (path if path.startswith("/") else f"/{path}")
 
 
 @dataclass(frozen=True)

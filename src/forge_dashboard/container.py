@@ -17,14 +17,10 @@ from forge_dashboard.services.jobs import JobsService
 from forge_dashboard.services.machine import MachineService
 from forge_dashboard.services.manifests import ManifestsService
 from forge_dashboard.services.metrics import MetricsService
+from forge_dashboard.services.project_services import ProjectServicesService
 from forge_dashboard.services.projects import ProjectsService
 from forge_dashboard.services.scheduler import SchedulerService
 from forge_dashboard.services.standards import StandardsService
-
-
-def _no_supervised_services(_project_id: str, _service_id: str) -> str | None:
-    """Until project services are supervised, no manifest service has a URL to read metrics from."""
-    return None
 
 
 def build_runtime(paths: DataPaths) -> Runtime:
@@ -37,7 +33,8 @@ def build_runtime(paths: DataPaths) -> Runtime:
     projects = ProjectsService(runtime, discovery, manifests)
     git = GitService(runtime, projects, jobs)
     checks = ChecksService(runtime, projects, git, jobs, scheduler)
-    metrics = MetricsService(runtime, projects, _no_supervised_services)
+    project_services = ProjectServicesService(runtime, projects, jobs)
+    metrics = MetricsService(runtime, projects, project_services.url_for)
     agents = AgentsService(runtime, projects, jobs, checks)
     forks = ForksService(runtime, projects, git, jobs, scheduler, checks, agents)
     github = GitHubService(runtime, projects, jobs)
@@ -54,6 +51,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
             git,
             github,
             checks,
+            project_services,
             metrics,
             agents,
             forks,
