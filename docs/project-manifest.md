@@ -27,6 +27,11 @@ text below, because other projects are written against it concurrently.
   braces are written `{{` and `}}`.
 - Every command started by the dashboard receives these env vars:
   `FORGE_PROJECT_ROOT`, `FORGE_PROJECT_ID`, `FORGE_DASHBOARD_URL`.
+- Validate a manifest with
+  `uv run --project <dashboard repo> forge-dashboard manifest validate <path>`;
+  it prints each error as `file:line: key.path: message` and exits 1 on
+  failure. Editors that understand JSON Schema for TOML can use
+  `schema/forge.project.schema.json` from the dashboard repo.
 
 ## Top level
 
@@ -57,6 +62,9 @@ V1 progress. Exactly one source.
 | `source` | `"milestones"` \| `"github-milestone"` | Where progress comes from. |
 | `target_date` | date, optional | Planned V1 date. |
 | `github_milestone` | string | Required when `source = "github-milestone"`. Progress = closed / (open + closed) issues in that GitHub milestone. |
+
+`github_milestone` is only valid with `source = "github-milestone"`, and
+`[[v1.milestones]]` only with `source = "milestones"`.
 
 With `source = "milestones"`, one or more `[[v1.milestones]]`:
 
@@ -116,6 +124,11 @@ Port policy, discriminated by `policy`:
 
 Every service also receives `FORGE_SERVICE_PORT` and `FORGE_SERVICE_HOST`.
 
+A portless service (no `port` table) cannot use `{port}`, `open`, or the
+`port` and `http` readiness kinds, since there is no port to substitute,
+probe, or open. `open` and readiness `path` values are URL paths, not full
+URLs.
+
 Readiness, discriminated by `kind`:
 
 - `{ kind = "port" }`: every declared port is listening under a process in
@@ -136,7 +149,7 @@ Endpoints that run elsewhere and are monitored, not launched.
 | `url` | URL | required | |
 | `machine` | string | none | Host name or label of the machine it runs on. |
 | `environment` | `production` \| `staging` \| `preview` \| `dev` | `"production"` | |
-| `health` | table | none | `{ path = "/health", expect_status = 200 }`, polled over HTTP(S). |
+| `health` | table | none | `{ path = "/health", expect_status = 200 }`, polled over HTTP(S). `path` is required in the table; `expect_status` defaults to 200. |
 
 ## `[[metrics]]` (0..n)
 
@@ -161,7 +174,7 @@ Sources, discriminated by `kind`:
   means the reading failed; stderr is shown.
 - `{ kind = "http", service = "<service id>", path = "/api/metrics/x" }`:
   GET against the running service; the body is a `MetricReading`. Reported as
-  unavailable while the service is stopped.
+  unavailable while the service is stopped. The service must declare a port.
 - `{ kind = "file", path = "reports/metric.json" }`: the file holds a
   `MetricReading`.
 
@@ -200,6 +213,8 @@ env `FORGE_ACTION_RESULT`:
 { "summary": "Re-indexed 1,204 files", "links": [{ "label": "Report", "url": "http://..." }], "artifacts": ["reports/index.json"] }
 ```
 
+Every `ActionResult` key is optional.
+
 ## `[launch]` (optional)
 
 | Key | Type | Meaning |
@@ -213,6 +228,15 @@ env `FORGE_ACTION_RESULT`:
 |---|---|---|
 | `template_revision` | string | forge commit the repo's standards were last aligned to. |
 | `aligned_at` | datetime | When that alignment happened. |
+
+## Cross-table rules
+
+Beyond the per-key rules above, a manifest is rejected when:
+
+- two entries in one table share an `id`;
+- `depends_on`, a metric's `source.service`, `requires_service`, or
+  `launch.primary_service` names a service that is not declared;
+- `depends_on` lists the service itself or forms a cycle.
 
 ## What the manifest does not hold
 

@@ -1,0 +1,1169 @@
+{
+  "$defs": {
+    "Action": {
+      "additionalProperties": false,
+      "description": "One `[[actions]]` entry: a project-defined operation with a self-built form.",
+      "properties": {
+        "argv": {
+          "description": "Command as an argv array; argv[0] is resolved on PATH.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Argv",
+          "type": "array"
+        },
+        "confirm": {
+          "default": false,
+          "description": "Ask before running.",
+          "title": "Confirm",
+          "type": "boolean"
+        },
+        "cwd": {
+          "default": ".",
+          "description": "Repo-relative path with forward slashes; no absolute paths or '..' segments.",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]*$",
+          "title": "Cwd",
+          "type": "string"
+        },
+        "danger": {
+          "default": false,
+          "description": "Destructive styling and typed confirmation.",
+          "title": "Danger",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON Schema (type = \"object\") for the input; params arrive on stdin as one JSON document.",
+          "title": "Params"
+        },
+        "requires_service": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Service that must be running.",
+          "title": "Requires Service"
+        },
+        "timeout_s": {
+          "default": 3600,
+          "exclusiveMinimum": 0,
+          "title": "Timeout S",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "argv"
+      ],
+      "title": "Action",
+      "type": "object"
+    },
+    "Check": {
+      "additionalProperties": false,
+      "description": "One `[[checks]]` entry: a local quality check.",
+      "properties": {
+        "argv": {
+          "description": "Command as an argv array; argv[0] is resolved on PATH.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Argv",
+          "type": "array"
+        },
+        "cwd": {
+          "default": ".",
+          "description": "Repo-relative path with forward slashes; no absolute paths or '..' segments.",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]*$",
+          "title": "Cwd",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "report": {
+          "default": "exit-code",
+          "description": "With junit, argv must contain {report_path}; the JUnit XML written there is parsed.",
+          "enum": [
+            "exit-code",
+            "junit"
+          ],
+          "title": "Report",
+          "type": "string"
+        },
+        "stage": {
+          "default": "manual",
+          "description": "Where this check lives in the project's gate chain (informational).",
+          "enum": [
+            "commit",
+            "push",
+            "ci",
+            "manual"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "timeout_s": {
+          "default": 900,
+          "exclusiveMinimum": 0,
+          "title": "Timeout S",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "argv"
+      ],
+      "title": "Check",
+      "type": "object"
+    },
+    "CommandSource": {
+      "additionalProperties": false,
+      "description": "stdout must be exactly one JSON `MetricReading`; non-zero exit fails the reading.",
+      "properties": {
+        "argv": {
+          "description": "Command as an argv array; argv[0] is resolved on PATH.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Argv",
+          "type": "array"
+        },
+        "cwd": {
+          "default": ".",
+          "description": "Repo-relative path with forward slashes; no absolute paths or '..' segments.",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]*$",
+          "title": "Cwd",
+          "type": "string"
+        },
+        "kind": {
+          "const": "command",
+          "title": "Kind",
+          "type": "string"
+        },
+        "timeout_s": {
+          "default": 60,
+          "exclusiveMinimum": 0,
+          "title": "Timeout S",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "argv"
+      ],
+      "title": "CommandSource",
+      "type": "object"
+    },
+    "Deployment": {
+      "additionalProperties": false,
+      "description": "One `[[deployments]]` entry: an endpoint that runs elsewhere and is monitored.",
+      "properties": {
+        "environment": {
+          "default": "production",
+          "enum": [
+            "production",
+            "staging",
+            "preview",
+            "dev"
+          ],
+          "title": "Environment",
+          "type": "string"
+        },
+        "health": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeploymentHealth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "machine": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Host name or label of the machine it runs on.",
+          "title": "Machine"
+        },
+        "url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "url"
+      ],
+      "title": "Deployment",
+      "type": "object"
+    },
+    "DeploymentHealth": {
+      "additionalProperties": false,
+      "description": "HTTP(S) health probe for a deployment.",
+      "properties": {
+        "expect_status": {
+          "default": 200,
+          "maximum": 599,
+          "minimum": 100,
+          "title": "Expect Status",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "DeploymentHealth",
+      "type": "object"
+    },
+    "DynamicPort": {
+      "additionalProperties": false,
+      "description": "`{ policy = \"dynamic\" }`: the dashboard picks a free port, trying `preferred` first.",
+      "properties": {
+        "policy": {
+          "const": "dynamic",
+          "title": "Policy",
+          "type": "string"
+        },
+        "preferred": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preferred"
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "title": "DynamicPort",
+      "type": "object"
+    },
+    "FileSource": {
+      "additionalProperties": false,
+      "description": "A repo file holding a `MetricReading`.",
+      "properties": {
+        "kind": {
+          "const": "file",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "description": "Repo-relative path with forward slashes; no absolute paths or '..' segments.",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]*$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "path"
+      ],
+      "title": "FileSource",
+      "type": "object"
+    },
+    "ForgeAlignment": {
+      "additionalProperties": false,
+      "description": "`[forge]`: written by tools when standards were last aligned.",
+      "properties": {
+        "aligned_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When that alignment happened.",
+          "title": "Aligned At"
+        },
+        "template_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "forge commit the repo's standards were last aligned to.",
+          "title": "Template Revision"
+        }
+      },
+      "title": "ForgeAlignment",
+      "type": "object"
+    },
+    "HttpReady": {
+      "additionalProperties": false,
+      "description": "Ready when GET `path` answers `expect_status`.",
+      "properties": {
+        "expect_status": {
+          "default": 200,
+          "maximum": 599,
+          "minimum": 100,
+          "title": "Expect Status",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "http",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "path"
+      ],
+      "title": "HttpReady",
+      "type": "object"
+    },
+    "HttpSource": {
+      "additionalProperties": false,
+      "description": "GET against a running service; the body is a `MetricReading`.",
+      "properties": {
+        "kind": {
+          "const": "http",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "service": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Service",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "service",
+        "path"
+      ],
+      "title": "HttpSource",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Launch": {
+      "additionalProperties": false,
+      "description": "`[launch]`: launch and interface instructions.",
+      "properties": {
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Markdown, or a repo-relative path to a .md file.",
+          "title": "Instructions"
+        },
+        "primary_service": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The service the Launch button starts and opens.",
+          "title": "Primary Service"
+        }
+      },
+      "title": "Launch",
+      "type": "object"
+    },
+    "LogReady": {
+      "additionalProperties": false,
+      "description": "Ready when a stdout/stderr line matches `pattern`.",
+      "properties": {
+        "kind": {
+          "const": "log",
+          "title": "Kind",
+          "type": "string"
+        },
+        "pattern": {
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "pattern"
+      ],
+      "title": "LogReady",
+      "type": "object"
+    },
+    "Metric": {
+      "additionalProperties": false,
+      "description": "One `[[metrics]]` entry: a project-defined value with history.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "display": {
+          "default": "number",
+          "description": "How the value renders. percent expects 0-100; duration expects seconds.",
+          "enum": [
+            "number",
+            "percent",
+            "duration",
+            "bytes",
+            "text",
+            "status"
+          ],
+          "title": "Display",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "interval_s": {
+          "default": 900,
+          "minimum": 30,
+          "title": "Interval S",
+          "type": "integer"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "pinned": {
+          "default": false,
+          "description": "Shown on the overview card.",
+          "title": "Pinned",
+          "type": "boolean"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "command": "#/$defs/CommandSource",
+              "file": "#/$defs/FileSource",
+              "http": "#/$defs/HttpSource"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CommandSource"
+            },
+            {
+              "$ref": "#/$defs/HttpSource"
+            },
+            {
+              "$ref": "#/$defs/FileSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "thresholds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetricThresholds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Display unit, e.g. \"files\".",
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "source"
+      ],
+      "title": "Metric",
+      "type": "object"
+    },
+    "MetricThresholds": {
+      "additionalProperties": false,
+      "description": "Status thresholds, applied when a reading carries no status.",
+      "properties": {
+        "fail_above": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fail Above"
+        },
+        "fail_below": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fail Below"
+        },
+        "warn_above": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Warn Above"
+        },
+        "warn_below": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Warn Below"
+        }
+      },
+      "title": "MetricThresholds",
+      "type": "object"
+    },
+    "Milestone": {
+      "additionalProperties": false,
+      "description": "One `[[v1.milestones]]` entry.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "done": {
+          "default": false,
+          "title": "Done",
+          "type": "boolean"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "weight": {
+          "default": 1,
+          "description": "Relative size.",
+          "minimum": 1,
+          "title": "Weight",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "title": "Milestone",
+      "type": "object"
+    },
+    "NoReady": {
+      "additionalProperties": false,
+      "description": "Ready as soon as the process starts.",
+      "properties": {
+        "kind": {
+          "const": "none",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "NoReady",
+      "type": "object"
+    },
+    "PinnedPort": {
+      "additionalProperties": false,
+      "description": "`{ policy = \"pinned\" }`: a fixed port that something outside the project hardcodes.",
+      "properties": {
+        "evidence": {
+          "description": "Where something outside the project hardcodes the port. Convention is not evidence.",
+          "minLength": 1,
+          "title": "Evidence",
+          "type": "string"
+        },
+        "policy": {
+          "const": "pinned",
+          "title": "Policy",
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy",
+        "port",
+        "evidence"
+      ],
+      "title": "PinnedPort",
+      "type": "object"
+    },
+    "PortReady": {
+      "additionalProperties": false,
+      "description": "Ready when every declared port listens under a process in the service's tree.",
+      "properties": {
+        "kind": {
+          "const": "port",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PortReady",
+      "type": "object"
+    },
+    "Project": {
+      "additionalProperties": false,
+      "description": "`[project]`: identity.",
+      "properties": {
+        "default_branch": {
+          "default": "main",
+          "description": "Branch that CI status and standards refer to.",
+          "minLength": 1,
+          "title": "Default Branch",
+          "type": "string"
+        },
+        "docs": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Documentation entry point: an http(s) URL or a repo path.",
+          "title": "Docs"
+        },
+        "homepage": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "maxLength": 2083,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Public page.",
+          "title": "Homepage"
+        },
+        "id": {
+          "description": "Stable identifier, unique across all projects the dashboard knows.",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "app",
+            "service",
+            "library",
+            "cli",
+            "tool",
+            "game",
+            "research"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "languages": {
+          "description": "Lowercase language names, e.g. python, rust.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Languages",
+          "type": "array"
+        },
+        "name": {
+          "description": "Display name.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "summary": {
+          "description": "One-line description.",
+          "maxLength": 140,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Free-form tags for filtering.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "id",
+        "summary",
+        "kind",
+        "languages"
+      ],
+      "title": "Project",
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": false,
+      "description": "One `[[services]]` entry: a long-running process the dashboard launches.",
+      "properties": {
+        "argv": {
+          "description": "Command as an argv array; argv[0] is resolved on PATH.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Argv",
+          "type": "array"
+        },
+        "cwd": {
+          "default": ".",
+          "description": "Repo-relative path with forward slashes; no absolute paths or '..' segments.",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]*$",
+          "title": "Cwd",
+          "type": "string"
+        },
+        "depends_on": {
+          "description": "Services started first.",
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "host": {
+          "default": "127.0.0.1",
+          "description": "Bind address passed as {host}.",
+          "minLength": 1,
+          "title": "Host",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL path appended to http://{host}:{port} by the Open action.",
+          "title": "Open"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "dynamic": "#/$defs/DynamicPort",
+                  "pinned": "#/$defs/PinnedPort"
+                },
+                "propertyName": "policy"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/DynamicPort"
+                },
+                {
+                  "$ref": "#/$defs/PinnedPort"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Port policy; omit for portless services.",
+          "title": "Port"
+        },
+        "ready": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "http": "#/$defs/HttpReady",
+                  "log": "#/$defs/LogReady",
+                  "none": "#/$defs/NoReady",
+                  "port": "#/$defs/PortReady"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PortReady"
+                },
+                {
+                  "$ref": "#/$defs/HttpReady"
+                },
+                {
+                  "$ref": "#/$defs/LogReady"
+                },
+                {
+                  "$ref": "#/$defs/NoReady"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Readiness signal. Defaults to { kind = \"port\" } when port is set, else { kind = \"none\" }.",
+          "title": "Ready"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "argv"
+      ],
+      "title": "Service",
+      "type": "object"
+    },
+    "V1": {
+      "additionalProperties": false,
+      "description": "`[v1]`: V1 progress, from exactly one source.",
+      "properties": {
+        "github_milestone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required when source = \"github-milestone\": the GitHub milestone title.",
+          "title": "Github Milestone"
+        },
+        "milestones": {
+          "items": {
+            "$ref": "#/$defs/Milestone"
+          },
+          "title": "Milestones",
+          "type": "array"
+        },
+        "source": {
+          "enum": [
+            "milestones",
+            "github-milestone"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "target_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Planned V1 date.",
+          "title": "Target Date"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "V1",
+      "type": "object"
+    }
+  },
+  "$id": "https://forge.local/schema/forge.project.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "forge project manifest, schema 1. See docs/project-manifest.md.",
+  "properties": {
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/Action"
+      },
+      "title": "Actions",
+      "type": "array"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/Check"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "deployments": {
+      "items": {
+        "$ref": "#/$defs/Deployment"
+      },
+      "title": "Deployments",
+      "type": "array"
+    },
+    "forge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ForgeAlignment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "launch": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Launch"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metrics": {
+      "items": {
+        "$ref": "#/$defs/Metric"
+      },
+      "title": "Metrics",
+      "type": "array"
+    },
+    "project": {
+      "$ref": "#/$defs/Project"
+    },
+    "schema": {
+      "const": 1,
+      "description": "Manifest schema version. Must be 1.",
+      "title": "Schema",
+      "type": "integer"
+    },
+    "services": {
+      "items": {
+        "$ref": "#/$defs/Service"
+      },
+      "title": "Services",
+      "type": "array"
+    },
+    "v1": {
+      "$ref": "#/$defs/V1"
+    }
+  },
+  "required": [
+    "schema",
+    "project",
+    "v1"
+  ],
+  "title": "forge.project.toml",
+  "type": "object"
+}

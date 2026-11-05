@@ -21,7 +21,7 @@ done = true
 id = "manifest-contract"
 title = "Manifest models, schema, validator CLI, doc"
 weight = 2
-done = false
+done = true
 
 [[v1.milestones]]
 id = "discovery"
