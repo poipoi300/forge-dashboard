@@ -18,7 +18,14 @@ from forge_dashboard.manifest.models import MetricThresholds
 from forge_dashboard.services.discovery import DiscoveryService, PathInput
 from forge_dashboard.services.jobs import JobsService
 from forge_dashboard.services.manifests import ManifestsService
-from forge_dashboard.services.metrics import HistoryInput, MetricsService, RefreshInput, apply_thresholds
+from forge_dashboard.services.metrics import (
+    HistoryInput,
+    IntervalOverride,
+    IntervalsInput,
+    MetricsService,
+    RefreshInput,
+    apply_thresholds,
+)
 from forge_dashboard.services.projects import ProjectsService
 
 PYTHON = sys.executable.replace(chr(92), "/")
@@ -161,3 +168,43 @@ async def test_history_accumulates_oldest_first(
     latest = await metrics.project_metrics(ProjectRef(project_id="alpha"))
     assert {reading.metric_id for reading in latest.metrics} == {"files", "report", "live", "broken"}
     assert len(projects.summary("alpha").metrics[0].history) >= 3
+
+
+async def test_interval_overrides_replace_the_manifest_interval_and_persist(
+    metrics_env: tuple[MetricsService, ProjectsService, DiscoveryService, dict[str, str]],
+    make_project: Callable[..., Path],
+) -> None:
+    metrics, _projects, discovery, _urls = metrics_env
+    alpha = make_project("Alpha", manifest=MANIFEST + METRICS, extra=METRIC_SCRIPT)
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: any(p.project_id == "alpha" for p in metrics.state.projects))
+
+    await metrics.set_intervals(
+        IntervalsInput(project_id="alpha", overrides=[IntervalOverride(metric_id="files", interval_s=60)])
+    )
+
+    readings = {
+        reading.metric_id: reading
+        for reading in (await metrics.project_metrics(ProjectRef(project_id="alpha"))).metrics
+    }
+    assert (readings["files"].interval_s, readings["report"].interval_s) == (60, 900)
+    assert metrics.state.projects[0].interval_overrides == {"files": 60}
+    assert await metrics.runtime.db.kv_get("metric-intervals", "alpha") == {
+        "project_id": "alpha",
+        "overrides": [{"metric_id": "files", "interval_s": 60}],
+    }
+
+
+async def test_interval_overrides_for_unknown_metrics_are_refused(
+    metrics_env: tuple[MetricsService, ProjectsService, DiscoveryService, dict[str, str]],
+    make_project: Callable[..., Path],
+) -> None:
+    metrics, _projects, discovery, _urls = metrics_env
+    alpha = make_project("Alpha", manifest=MANIFEST + METRICS, extra=METRIC_SCRIPT)
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: any(p.project_id == "alpha" for p in metrics.state.projects))
+
+    with pytest.raises(ActionError, match="ghost"):
+        await metrics.set_intervals(
+            IntervalsInput(project_id="alpha", overrides=[IntervalOverride(metric_id="ghost", interval_s=60)])
+        )

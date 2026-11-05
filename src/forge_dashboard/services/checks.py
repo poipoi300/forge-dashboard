@@ -375,9 +375,18 @@ class ChecksService(Service[ChecksConfig, ChecksState], ProjectListener):
         ran = [run for run in project.checks if run.outcome not in ("never", "running")]
         reported = [run for run in ran if run.tests is not None]
         latest = max(ran, key=lambda run: run.ran_at or 0, default=None)
+        failed = sum(1 for run in ran if run.outcome != "passed")
+        result: Literal["never-run", "running", "passing", "failing"]
+        if any(run.outcome == "running" for run in project.checks):
+            result = "running"
+        elif not ran:
+            result = "never-run"
+        else:
+            result = "failing" if failed else "passing"
         return CheckFacts(
-            passed=sum(1 for run in ran if run.outcome == "passed"),
-            failed=sum(1 for run in ran if run.outcome != "passed"),
+            result=result,
+            passed=len(ran) - failed,
+            failed=failed,
             total=len(project.checks),
             tests_passed=sum((r.tests or 0) - (r.failures or 0) - (r.errors or 0) - (r.skipped or 0) for r in reported)
             if reported

@@ -73,11 +73,13 @@ def test_weighted_v1_progress_names_the_next_milestone() -> None:
     assert progress.next_milestone == "Core"
     assert progress.days_left == 26
     assert progress.caption == "1/3 · 26d left"
+    assert progress.detail == "next: Core"
 
 
 def test_overdue_and_github_milestone_progress() -> None:
     overdue = rules.v1_progress([("Only", 1, True)], date(2026, 11, 1), date(2026, 11, 5))
     assert overdue.caption == "1/1 · 4d overdue" and overdue.next_milestone is None
+    assert overdue.detail == ""
     github = rules.github_milestone_progress(3, 1, None, date(2026, 11, 5))
     assert (github.percent, github.caption) == (25.0, "1/4")
     assert rules.v1_progress([], None, date(2026, 11, 5)).percent == 0

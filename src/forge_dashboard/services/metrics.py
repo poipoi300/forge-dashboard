@@ -18,7 +18,14 @@ from forge_dashboard.core.ui import ui
 from forge_dashboard.domain.commands import render_command
 from forge_dashboard.domain.summary import MetricsFacts, PinnedMetric
 from forge_dashboard.manifest import MetricReading
-from forge_dashboard.manifest.models import CommandSource, FileSource, HttpSource, Metric, MetricThresholds
+from forge_dashboard.manifest.models import (
+    CommandSource,
+    FileSource,
+    HttpSource,
+    Metric,
+    MetricDisplay,
+    MetricThresholds,
+)
 from forge_dashboard.process import tree
 from forge_dashboard.services.projects import ProjectListener, ProjectRecord, ProjectsService
 
@@ -54,10 +61,13 @@ class MetricError(Exception):
     """A reading could not be taken; the message is shown with the metric."""
 
 
+INTERVALS_NAMESPACE = "metric-intervals"
+
+
 class LatestReading(BaseModel):
     metric_id: str
     label: str
-    display: str
+    display: MetricDisplay
     unit: str | None = None
     pinned: bool
     value: bool | int | float | str | None = None
@@ -72,6 +82,10 @@ class ProjectMetrics(BaseModel):
     project_id: str
     metrics: list[LatestReading] = Field(
         default_factory=list, json_schema_extra=ui(columns=["label", "value", "status"])
+    )
+    interval_overrides: dict[str, int] = Field(
+        default_factory=dict,
+        json_schema_extra=ui(help="Dashboard overrides of the manifest's intervals, by metric id."),
     )
 
 
@@ -97,6 +111,24 @@ class HistoryInput(BaseModel):
     project_id: str = Field(json_schema_extra=ui(hidden=True, bind="project"))
     metric_id: str
     limit: int = Field(200, ge=1, le=5000)
+
+
+class IntervalOverride(BaseModel):
+    metric_id: str
+    interval_s: int = Field(ge=30, json_schema_extra=ui(widget="duration", help="How often the dashboard reads it."))
+
+
+class IntervalsInput(BaseModel):
+    project_id: str = Field(json_schema_extra=ui(hidden=True, bind="project"))
+    overrides: list[IntervalOverride] = Field(
+        default_factory=list,
+        json_schema_extra=ui(help="Per-metric reading intervals; a metric not listed uses the manifest's interval_s."),
+    )
+
+
+class MetricIntervals(BaseModel):
+    project_id: str
+    overrides: list[IntervalOverride]
 
 
 class MetricPoint(BaseModel):
@@ -139,6 +171,7 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
         self._projects = projects
         self._service_url = service_url
         self._latest: dict[str, dict[str, LatestReading]] = {}
+        self._intervals: dict[str, dict[str, int]] = {}
         self._loops: dict[str, asyncio.Task[None]] = {}
         self._limit = asyncio.Semaphore(self.config.concurrency)
         projects.listen(self)
@@ -160,7 +193,13 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
     @override
     async def project_upserted(self, record: ProjectRecord) -> None:
         self._stop_loops(record.id)
-        metrics = record.manifest.metrics if record.manifest is not None else []
+        stored = await self.runtime.db.kv_get(INTERVALS_NAMESPACE, record.id)
+        self._intervals[record.id] = (
+            {item.metric_id: item.interval_s for item in MetricIntervals.model_validate(stored).overrides}
+            if stored is not None
+            else {}
+        )
+        metrics = self._metrics(record)
         latest: dict[str, LatestReading] = {}
         for metric in metrics:
             latest[metric.id] = await self._load_latest(record.id, metric)
@@ -175,7 +214,17 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
     async def project_removed(self, project_id: str) -> None:
         self._stop_loops(project_id)
         self._latest.pop(project_id, None)
+        self._intervals.pop(project_id, None)
         self._publish_state()
+
+    def _metrics(self, record: ProjectRecord) -> list[Metric]:
+        """The manifest's metrics with the dashboard's interval overrides applied."""
+        overrides = self._intervals.get(record.id, {})
+        metrics = record.manifest.metrics if record.manifest is not None else []
+        return [
+            metric.model_copy(update={"interval_s": overrides[metric.id]}) if metric.id in overrides else metric
+            for metric in metrics
+        ]
 
     def _stop_loops(self, project_id: str) -> None:
         for key in [key for key in self._loops if key.startswith(f"{project_id}:")]:
@@ -318,7 +367,7 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
     async def _publish(self, project_id: str) -> None:
         latest = self._latest.get(project_id, {})
         record = self._projects.record(project_id)
-        metrics = record.manifest.metrics if record.manifest is not None else []
+        metrics = self._metrics(record)
         pinned = [
             PinnedMetric(
                 id=metric.id,
@@ -338,7 +387,11 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
 
     def _publish_state(self) -> None:
         projects = [
-            ProjectMetrics(project_id=project_id, metrics=list(readings.values()))
+            ProjectMetrics(
+                project_id=project_id,
+                metrics=list(readings.values()),
+                interval_overrides=self._intervals.get(project_id, {}),
+            )
             for project_id, readings in sorted(self._latest.items())
             if readings
         ]
@@ -346,7 +399,7 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
 
     def _metric(self, project_id: str, metric_id: str) -> tuple[ProjectRecord, Metric]:
         record = self._projects.record(project_id)
-        for metric in record.manifest.metrics if record.manifest is not None else []:
+        for metric in self._metrics(record):
             if metric.id == metric_id:
                 return record, metric
         raise ActionError(f"no metric {metric_id!r} in the manifest", status=404)
@@ -357,12 +410,25 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
     async def refresh(self, request: RefreshInput) -> ProjectMetrics:
         """Read a project's metrics now, without waiting for their interval."""
         record = self._projects.record(request.project_id)
-        metrics = record.manifest.metrics if record.manifest is not None else []
+        metrics = self._metrics(record)
         targets = [metric for metric in metrics if request.metric_id in (None, metric.id)]
         if request.metric_id is not None and not targets:
             raise ActionError(f"no metric {request.metric_id!r} in the manifest", status=404)
         await asyncio.gather(*(self.read(record, metric) for metric in targets))
         return ProjectMetrics(project_id=record.id, metrics=list(self._latest.get(record.id, {}).values()))
+
+    @action(title="Set metric intervals")
+    async def set_intervals(self, request: IntervalsInput) -> MetricIntervals:
+        """Override how often this project's metrics are read; the manifest's interval_s stays the default."""
+        record = self._projects.record(request.project_id)
+        known = {metric.id for metric in record.manifest.metrics} if record.manifest is not None else set()
+        unknown = sorted({item.metric_id for item in request.overrides} - known)
+        if unknown:
+            raise ActionError(f"no metric {', '.join(map(repr, unknown))} in the manifest", status=404)
+        intervals = MetricIntervals(project_id=record.id, overrides=request.overrides)
+        await self.runtime.db.kv_put(INTERVALS_NAMESPACE, record.id, intervals.model_dump(mode="json"))
+        await self.project_upserted(record)
+        return intervals
 
     @action(title="Metric history", query=True)
     async def history(self, request: HistoryInput) -> MetricHistory:

@@ -23,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from forge_dashboard.core.ui import ui, with_hints
+from forge_dashboard.manifest.models import MetricDisplay
 
 # --- shared vocabularies ---
 
@@ -87,13 +88,19 @@ class ManifestFacts(BaseModel):
 
 
 class GitFacts(BaseModel):
-    branch: str | None = Field(None, json_schema_extra=ui(format="code"))
+    branch: str | None = Field(None, json_schema_extra=ui(format="code", short_label=""))
     head_sha: str | None = Field(None, json_schema_extra=ui(hidden=True))
-    dirty: int = Field(0, json_schema_extra=ui(short_label="dirty", help="Changed and untracked files."))
-    ahead: int | None = Field(None, json_schema_extra=ui(short_label="ahead", help="Commits ahead of the upstream."))
-    behind: int | None = Field(None, json_schema_extra=ui(short_label="behind", help="Commits behind the upstream."))
-    unpushed: int = Field(0, json_schema_extra=ui(short_label="unpushed"))
-    stashes: int = Field(0, json_schema_extra=ui(short_label="stashes"))
+    dirty: int = Field(
+        0, json_schema_extra=ui(short_label="dirty", hide_zero=True, help="Changed and untracked files.")
+    )
+    ahead: int | None = Field(
+        None, json_schema_extra=ui(short_label="ahead", hide_zero=True, help="Commits ahead of the upstream.")
+    )
+    behind: int | None = Field(
+        None, json_schema_extra=ui(short_label="behind", hide_zero=True, help="Commits behind the upstream.")
+    )
+    unpushed: int = Field(0, json_schema_extra=ui(short_label="unpushed", hide_zero=True))
+    stashes: int = Field(0, json_schema_extra=ui(short_label="stashes", hide_zero=True))
     last_commit_at: float | None = Field(None, json_schema_extra=ui(hidden=True))
     last_worktree_change_at: float | None = Field(None, json_schema_extra=ui(hidden=True))
     origin_url: str | None = Field(None, json_schema_extra=ui(hidden=True))
@@ -102,6 +109,15 @@ class GitFacts(BaseModel):
 
 
 class CheckFacts(BaseModel):
+    result: Literal["never-run", "running", "passing", "failing"] = Field(
+        "never-run",
+        json_schema_extra=ui(
+            format="badge",
+            enum_labels={"never-run": "not run yet", "running": "running", "passing": "passing", "failing": "failing"},
+            tones={"never-run": "neutral", "running": "info", "passing": "good", "failing": "bad"},
+            short_label="",
+        ),
+    )
     passed: int = Field(0, json_schema_extra=ui(short_label="pass"))
     failed: int = Field(0, json_schema_extra=ui(short_label="fail"))
     total: int = Field(0, json_schema_extra=ui(hidden=True))
@@ -234,7 +250,7 @@ class ServicesFacts(BaseModel):
 class ForkFacts(BaseModel):
     is_fork: bool = Field(False, json_schema_extra=ui(hidden=True))
     upstream: str | None = Field(None, json_schema_extra=ui(short_label="upstream"))
-    behind_upstream: int | None = Field(None, json_schema_extra=ui(short_label="behind upstream"))
+    behind_upstream: int | None = Field(None, json_schema_extra=ui(short_label="behind upstream", hide_zero=True))
     ahead_of_upstream: int | None = Field(None, json_schema_extra=ui(hidden=True))
     last_sync: Literal["synced", "conflict", "needs-attention", "ready-to-apply", "failed", "never"] = Field(
         "never",
@@ -260,13 +276,15 @@ class StandardsFacts(BaseModel):
     total: int = Field(0, json_schema_extra=ui(short_label="of"))
     failing: list[str] = Field(default_factory=list, json_schema_extra=ui(hidden=True))
     drift: bool = Field(False, json_schema_extra=ui(help="Behind forge's HEAD or failing checks."))
-    forge_commits_behind: int | None = Field(None, json_schema_extra=ui(short_label="forge commits behind"))
+    forge_commits_behind: int | None = Field(
+        None, json_schema_extra=ui(short_label="forge commits behind", hide_zero=True)
+    )
 
 
 class PinnedMetric(BaseModel):
     id: str = Field(json_schema_extra=ui(hidden=True))
     label: str
-    display: Literal["number", "percent", "duration", "bytes", "text", "status"]
+    display: MetricDisplay
     unit: str | None = None
     value: bool | int | float | str | None = None
     status: Literal["ok", "warn", "fail"] | None = Field(
@@ -281,7 +299,14 @@ class MetricsFacts(BaseModel):
 
 
 class AgentFacts(BaseModel):
-    active: bool = Field(False, json_schema_extra=ui(help="A claude process is running inside the project now."))
+    active: bool = Field(
+        False,
+        json_schema_extra=ui(
+            short_label="agent working",
+            tones={"true": "info"},
+            help="A claude process is running inside the project now.",
+        ),
+    )
     last_session_at: float | None = Field(None, json_schema_extra=ui(format="relative-time", short_label="last agent"))
     session_count: int = Field(0, json_schema_extra=ui(short_label="sessions"))
 
@@ -325,6 +350,7 @@ class V1Progress(BaseModel):
     target_date: date | None = Field(None, json_schema_extra=ui(short_label="target"))
     days_left: int | None = Field(None, json_schema_extra=ui(unit="days", short_label="left"))
     caption: str = ""
+    detail: str = Field("", json_schema_extra=ui(help="The line under the bar: what comes next."))
 
 
 class LastChange(BaseModel):
@@ -369,7 +395,9 @@ class ProjectSummary(BaseModel):
     checks: CheckFacts | None = Field(
         None,
         json_schema_extra=ui(
-            slot="signals", short_label="checks", columns=["passed", "failed", "coverage_percent", "stale", "ran_at"]
+            slot="signals",
+            short_label="checks",
+            columns=["result", "tests_passed", "coverage_percent", "stale", "ran_at"],
         ),
     )
     ci: CiFacts | None = Field(
@@ -510,6 +538,7 @@ def _progress(
         target_date=target_date,
         days_left=days_left,
         caption=caption,
+        detail=f"next: {next_milestone}" if next_milestone else "",
     )
 
 

@@ -363,6 +363,9 @@ class Deployment(ManifestModel):
     health: DeploymentHealth | None = None
 
 
+MetricDisplay = Literal["number", "percent", "duration", "bytes", "text", "status"]
+
+
 class MetricThresholds(ManifestModel):
     """Status thresholds, applied when a reading carries no status."""
 
@@ -412,7 +415,7 @@ class Metric(ManifestModel):
     label: Annotated[str, Field(min_length=1)]
     description: str | None = None
     unit: str | None = Field(None, description='Display unit, e.g. "files".')
-    display: Literal["number", "percent", "duration", "bytes", "text", "status"] = Field(
+    display: MetricDisplay = Field(
         "number", description="How the value renders. percent expects 0-100; duration expects seconds."
     )
     interval_s: Annotated[int, Field(ge=30)] = 900

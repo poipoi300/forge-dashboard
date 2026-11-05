@@ -191,6 +191,7 @@ async def test_runs_record_results_publish_facts_and_detect_regressions(
     assert first.status is JobStatus.SUCCEEDED and first.summary == "2 passed"
     facts = projects.summary("alpha").checks
     assert facts is not None and (facts.passed, facts.failed, facts.total, facts.tests_passed) == (2, 0, 2, 1)
+    assert facts.result == "passing"
     assert not facts.stale and facts.sha == git(alpha, "rev-parse", "--short=7", "HEAD")
 
     (alpha / "ok.flag").unlink()
@@ -206,6 +207,7 @@ async def test_runs_record_results_publish_facts_and_detect_regressions(
     assert regressed and regressed[0].notify_kind == "check-regression"
     summary = projects.summary("alpha")
     assert summary.checks is not None and summary.checks.tests_failed == 1
+    assert summary.checks.result == "failing"
     assert summary.health.level.value == "failing"
 
     history = await checks.history(HistoryInput(project_id="alpha", check_id="unit"))

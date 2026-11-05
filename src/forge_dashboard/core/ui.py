@@ -76,8 +76,10 @@ class UiHints(TypedDict, total=False):
     min: float
     max: float
     step: float
-    # extension: short label for dense surfaces (table headers, card captions).
+    # extension: short label for dense surfaces (table headers, card captions); "" leaves the value unlabelled.
     short_label: str
+    # extension: on dense surfaces, leave a zero count out instead of showing "0".
+    hide_zero: bool
     # extension: card slot on the overview card ("title", "meta", "status", "signals", "body", "footer").
     slot: str
 
