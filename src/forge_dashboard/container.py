@@ -5,9 +5,11 @@ from __future__ import annotations
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.github.bridge import GitHubBridge
+from forge_dashboard.services.actions import ActionsService
 from forge_dashboard.services.agents import AgentsService
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import DiscoveryService
+from forge_dashboard.services.events import EventsService
 from forge_dashboard.services.forge_runs import ForgeRunsService
 from forge_dashboard.services.forks import ForksService
 from forge_dashboard.services.gallery import GalleryService
@@ -20,6 +22,7 @@ from forge_dashboard.services.metrics import MetricsService
 from forge_dashboard.services.project_services import ProjectServicesService
 from forge_dashboard.services.projects import ProjectsService
 from forge_dashboard.services.scheduler import SchedulerService
+from forge_dashboard.services.settings import SettingsService
 from forge_dashboard.services.standards import StandardsService
 
 
@@ -31,6 +34,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
     discovery = DiscoveryService(runtime, jobs)
     manifests = ManifestsService(runtime)
     projects = ProjectsService(runtime, discovery, manifests)
+    events = EventsService(runtime, projects)
     git = GitService(runtime, projects, jobs)
     checks = ChecksService(runtime, projects, git, jobs, scheduler)
     project_services = ProjectServicesService(runtime, projects, jobs)
@@ -41,9 +45,11 @@ def build_runtime(paths: DataPaths) -> Runtime:
     bridge = GitHubBridge(github)
     agents.connect_github(bridge, bridge)
     forks.connect_github(bridge.parent_clone_url)
-    # Discovery starts last: every project listener must be registered before it publishes candidates.
+    # Events starts first so its bus subscription records everything later services publish;
+    # discovery starts last so every project listener exists before it publishes candidates.
     runtime.register(
         [
+            events,
             jobs,
             scheduler,
             manifests,
@@ -59,6 +65,8 @@ def build_runtime(paths: DataPaths) -> Runtime:
             MachineService(runtime, projects),
             ForgeRunsService(runtime, projects),
             GalleryService(runtime, jobs),
+            SettingsService(runtime, projects),
+            ActionsService(runtime, projects, jobs, project_services.url_for),
             discovery,
         ]
     )
