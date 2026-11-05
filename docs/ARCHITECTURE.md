@@ -65,3 +65,36 @@ to their section.
 - **A start is active immediately.** `Supervisor.start` moves the service to
   `starting` before its task first runs, so a dependent waiting for readiness
   never mistakes a just-started provider for a stopped one.
+
+## Services framework
+
+- **Services are constructed before the event loop starts; storage opens in
+  the lifespan.** Constructors do no I/O, so the app (and its OpenAPI
+  document) can be built without a database, which is how
+  `forge-dashboard openapi` exports the schema the TypeScript types are
+  generated from.
+- **Every action is a typed route.** Each `@action` becomes
+  `POST /api/services/{id}/actions/{action}` with its own request and
+  response models (a generated endpoint gets a real `inspect.Signature`), so
+  OpenAPI carries every model. WebSocket-only models are merged into the
+  OpenAPI components for the same reason.
+- **Query actions.** The descriptor adds `query: bool` to the spec's action
+  fields: read-only requests (job logs, diffs, issue lists) are actions too,
+  so they share validation and typing, but the generic UI never renders them
+  as buttons.
+- **State patches are RFC 6902.** The state hub coalesces changes for 50 ms,
+  diffs with `jsonpatch`, and numbers revisions per service; a client that
+  falls behind gets a fresh hello with snapshots instead of a gap.
+- **The WebSocket handler uses an anyio task group.** Raw asyncio tasks inside
+  a connection made the ASGI server's anyio cancel scope leak a
+  `CancelledError` on roughly one close in seven (reproduced in a loop,
+  fixed, then 40 clean runs).
+- **Jobs own concurrency.** A job names resources (`agent`, `checks`,
+  `repo:<project>`) and is queued until it holds all of them, acquired in
+  sorted order so two jobs can never deadlock. "One agent run at a time" and
+  "never two checks in one repo" are both this mechanism. `ATTENTION` is a
+  terminal job status for work that finished but parked for the user.
+- **x-ui extensions** beyond the spec vocabulary: `bind` (fill from page
+  context, e.g. the current project), `tones` (per-enum tone for badges,
+  always paired with text), `min`/`max`/`step` (sliders), `short_label`
+  (dense headers), `slot` (overview card placement).

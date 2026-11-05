@@ -5,6 +5,7 @@ description = "Local control room for every project created with forge"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiosqlite>=0.22.1",
     "croniter>=6.0",
     "desktop-notifier>=6.1",
     "fastapi>=0.120",

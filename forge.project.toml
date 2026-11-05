@@ -39,7 +39,7 @@ done = false
 id = "services-api"
 title = "Service registry, descriptors, event stream, jobs, scheduler"
 weight = 3
-done = false
+done = true
 
 [[v1.milestones]]
 id = "git-checks-metrics"
