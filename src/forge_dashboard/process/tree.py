@@ -380,3 +380,40 @@ async def stream(
         timed_out=timed_out,
         duration_s=time.monotonic() - started,
     )
+
+
+def launch_detached(argv: Sequence[str], cwd: Path) -> int:
+    """Start a GUI or terminal program the user keeps after the dashboard exits (editor, file manager).
+
+    Unlike `spawn`, the child gets no Job Object and its own process group or
+    session, so stopping the dashboard never closes the user's editor.
+
+    Returns:
+        The child's pid.
+
+    Raises:
+        ExecutableNotFoundError: when argv[0] does not resolve.
+    """
+    executable = resolve_executable(argv[0])
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        process = subprocess.Popen(
+            [executable, *argv[1:]],
+            cwd=cwd,
+            creationflags=flags,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    else:
+        process = subprocess.Popen(
+            [executable, *argv[1:]],
+            cwd=cwd,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    return process.pid

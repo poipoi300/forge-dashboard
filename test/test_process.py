@@ -3,6 +3,7 @@
 import asyncio
 import socket
 import sys
+import time
 from pathlib import Path
 
 import psutil
@@ -139,3 +140,16 @@ def test_relative_fragments_never_count_as_inside_a_project(tmp_path: Path, monk
         port=1, pid=1, name="svchost.exe", cmdline=("svchost.exe", "-k", "RPCSS"), cwd=None, create_time=0.0
     )
     assert not holder.lives_inside(tmp_path)
+
+
+def test_detached_launches_outlive_no_job_and_report_their_pid(tmp_path: Path) -> None:
+    marker = tmp_path / "launched.txt"
+    pid = tree.launch_detached([PY, "-c", f"import pathlib; pathlib.Path({str(marker)!r}).write_text('ok')"], tmp_path)
+    assert pid > 0
+    for _ in range(50):
+        if marker.exists():
+            break
+        time.sleep(0.1)
+    assert marker.read_text(encoding="utf-8") == "ok"
+    with pytest.raises(tree.ExecutableNotFoundError):
+        tree.launch_detached(["definitely-not-installed-xyz"], tmp_path)
