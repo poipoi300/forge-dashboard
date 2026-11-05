@@ -46,3 +46,22 @@ to their section.
 - **`schema` field alias.** The top-level key `schema` would shadow a pydantic
   `BaseModel` attribute, so the model field is `schema_version` with alias
   `schema`; the generated JSON Schema uses the alias.
+
+## Processes and supervision
+
+- **`mypy_path = "src"`** is added to forge's mypy settings. With
+  `explicit_package_bases` and a `src/` layout, mypy otherwise names modules
+  `src.forge_dashboard...` and, under `ignore_missing_imports`, silently
+  types every cross-module import as `Any`. This tightens the gate.
+- **Every subprocess goes through `process/tree.py`.** Windows children start
+  suspended in a new process group, join a kill-on-close Job Object, then
+  resume; job membership (not the parent chain) defines the tree, so orphaned
+  grandchildren of `uv run`/`bun run` are found and killed. POSIX children
+  start a new session and the group is signalled. `spawn` is
+  cancellation-safe: a cancel during creation still kills the child.
+- **Launch plans layer env over ours.** `LaunchPlan.env` and `PreStep.env`
+  are overrides; the supervisor merges them with its own environment, since a
+  Windows child without `SYSTEMROOT` cannot even open a socket.
+- **A start is active immediately.** `Supervisor.start` moves the service to
+  `starting` before its task first runs, so a dependent waiting for readiness
+  never mistakes a just-started provider for a stopped one.
