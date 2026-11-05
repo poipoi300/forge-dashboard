@@ -84,3 +84,8 @@ class UiHints(TypedDict, total=False):
 def ui(**hints: Unpack[UiHints]) -> dict[str, Any]:
     """Return a `json_schema_extra` dict carrying one `x-ui` object."""
     return {"x-ui": dict(hints)}
+
+
+def with_hints(base: dict[str, Any], **hints: Unpack[UiHints]) -> dict[str, Any]:
+    """Extend a shared `ui(...)` dict with field-specific hints."""
+    return {"x-ui": {**base["x-ui"], **hints}}

@@ -27,7 +27,7 @@ done = true
 id = "discovery"
 title = "Roots scan, watcher, registry, unmanifested and forge detection"
 weight = 2
-done = false
+done = true
 
 [[v1.milestones]]
 id = "supervisor-runner"

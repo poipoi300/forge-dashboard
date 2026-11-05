@@ -254,10 +254,11 @@ class JobsService(Service[JobsConfig, JobsState]):
         self._refresh_state()
 
     async def stop(self) -> None:
-        for job in list(self._jobs.values()):
-            if job.task is not None and not job.task.done():
-                job.task.cancel()
-        await asyncio.gather(*(job.finished.wait() for job in self._jobs.values()), return_exceptions=True)
+        # Await the tasks, not `finished`: a task cancelled before its first step never runs its body.
+        tasks = [job.task for job in self._jobs.values() if job.task is not None and not job.task.done()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     @override
     async def on_config_changed(self, previous: JobsConfig) -> None:
@@ -310,8 +311,15 @@ class JobsService(Service[JobsConfig, JobsState]):
         return semaphore
 
     async def _execute(self, job: _Job) -> None:
-        outcome = JobOutcome(status=JobStatus.FAILED)
-        error: str | None = None
+        try:
+            outcome, error = await self._perform(job)
+            await self._finish(job, outcome, error)
+        finally:
+            self._jobs.pop(job.summary.id, None)
+            job.finished.set()
+
+    async def _perform(self, job: _Job) -> tuple[JobOutcome, str | None]:
+        """Acquire the job's resources, run its work, and turn every ending into an outcome."""
         async with contextlib.AsyncExitStack() as stack:
             try:
                 for resource in job.resources:
@@ -321,19 +329,22 @@ class JobsService(Service[JobsConfig, JobsState]):
                     await stack.enter_async_context(semaphore)
                 job.log_file = stack.enter_context(job.log_path.open("a", encoding="utf-8"))
                 await self._transition(job, JobStatus.RUNNING, started_at=time.time(), waiting_for=None)
-                outcome = await job.work(JobContext(self, job))
+                return await job.work(JobContext(self, job)), None
             except asyncio.CancelledError:
-                outcome = JobOutcome(status=JobStatus.CANCELLED, summary="cancelled")
+                return JobOutcome(status=JobStatus.CANCELLED, summary="cancelled"), None
             except ActionError as failure:
-                error = failure.message
                 self._append(job, f"error: {failure.message}")
+                return JobOutcome(status=JobStatus.FAILED), failure.message
             except Exception as failure:  # a job's own bug must end the job, not the dashboard
                 error = f"{type(failure).__name__}: {failure}"
                 self._append(job, f"error: {error}")
                 self.runtime.log.exception("job %s crashed", job.summary.id)
+                return JobOutcome(status=JobStatus.FAILED), error
             finally:
                 self._flush_log(job)
                 job.log_file = None
+
+    async def _finish(self, job: _Job, outcome: JobOutcome, error: str | None) -> None:
         result = outcome.result.model_dump(mode="json") if outcome.result is not None else None
         await self._transition(
             job,
@@ -344,8 +355,6 @@ class JobsService(Service[JobsConfig, JobsState]):
             progress=None if outcome.status is not JobStatus.SUCCEEDED else 1.0,
             result=result,
         )
-        self._jobs.pop(job.summary.id, None)
-        job.finished.set()
         final = job.summary
         self.publish(
             JobFinished(
@@ -471,7 +480,7 @@ class JobsService(Service[JobsConfig, JobsState]):
         if job is None or job.task is None:
             raise ActionError("the job is not running", status=409)
         job.task.cancel()
-        await job.finished.wait()
+        await asyncio.wait([job.task])
         return Done(message="cancelled")
 
     @action(title="Job history", query=True)

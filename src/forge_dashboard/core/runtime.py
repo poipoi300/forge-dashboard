@@ -128,8 +128,9 @@ class Runtime:
         self._db = await Database.open(self.paths.database)
 
     async def start(self) -> None:
-        """Open storage, load every service's config, then start them in registration order."""
-        await self.open()
+        """Open storage (unless already open), load every service's config, then start them in registration order."""
+        if self._db is None:
+            await self.open()
         for service in self.services.values():
             await service.load_config()
         for service in self.services.values():
