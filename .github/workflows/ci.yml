@@ -1,0 +1,54 @@
+# Durable enforcement of the anti-slop gates. Pre-commit hooks can be bypassed
+# with --no-verify; this runs the same checks on every push and PR so nothing
+# lands unchecked.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dev tools
+        run: |
+          uv sync --group dev
+          bun install --cwd web --frozen-lockfile
+      - name: ruff format (check only)
+        run: uv run ruff format --check .
+      - name: ruff check
+        run: uv run ruff check .
+      - name: mypy
+        run: uv run mypy .
+      - name: biome (check only)
+        run: bun run --cwd web biome check .
+      - name: tsc
+        run: bun run --cwd web tsc --noEmit -p .
+
+  tests-and-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # diff-cover needs history to compare against main
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dev tools
+        run: |
+          uv sync --group dev
+          bun install --cwd web --frozen-lockfile
+      - name: Tests + diff coverage (Python and TypeScript)
+        run: bash tools/stack_coverage_gate.sh

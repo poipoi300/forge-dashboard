@@ -1,0 +1,23 @@
+__pycache__/
+.venv/
+.env
+.idea/
+.zed/
+
+# Agent run artifacts (inspectable step workspaces; never committed)
+runs/
+
+# Test / coverage artifacts
+.coverage
+coverage.xml
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend dependencies and build output
+node_modules/
+web/dist/
+web/coverage/
+
+# Runner log dumps
+logs/

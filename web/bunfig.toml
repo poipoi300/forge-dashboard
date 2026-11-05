@@ -1,0 +1,7 @@
+[test]
+preload = ["./test/setup.ts"]
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["src/api/schema.d.ts", "test/**", "src/components/ui/**"]
+
+[serve.static]
+plugins = ["bun-plugin-tailwind"]

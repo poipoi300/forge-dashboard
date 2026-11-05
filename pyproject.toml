@@ -1,0 +1,99 @@
+[project]
+name = "forge-dashboard"
+version = "0.1.0"
+description = "Local control room for every project created with forge"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "croniter>=6.0",
+    "desktop-notifier>=6.1",
+    "fastapi>=0.120",
+    "httpx>=0.28",
+    "jsonpatch>=1.33",
+    "jsonschema>=4.25",
+    "keyring>=25.6",
+    "platformdirs>=4.3",
+    "pre-commit>=4.0",
+    "psutil>=7.0",
+    "pydantic>=2.12",
+    "pyyaml>=6.0.3",
+    "textual>=6.0",
+    "uvicorn>=0.38",
+    "watchfiles>=1.1",
+    "websockets>=15.0",
+]
+
+[project.scripts]
+forge-dashboard = "forge_dashboard.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.8"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "forge_dashboard"
+
+[dependency-groups]
+dev = [
+    "coverage>=7.6",
+    "diff-cover>=9.2",
+    "mypy>=1.14",
+    "pytest>=9.1",
+    "pytest-asyncio>=1.2",
+    "respx>=0.22",
+    "ruff>=0.14",
+    "types-croniter>=6.0",
+    "types-jsonschema>=4.25",
+    "types-psutil>=7.0",
+    "types-pyyaml>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "live: touches a real external dependency (network, claude CLI); self-skips when it is unavailable",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",
+    "I",       # imports
+    "UP",      # outdated constructs
+    "B",       # likely bugs
+    "SIM",     # needless complexity
+    "C4",      # unnecessary comprehensions
+    "RET",     # confused returns
+    "ARG",     # unused arguments
+    "PTH",     # pathlib consistency
+    "PERF",    # obvious performance mistakes
+    "RUF",
+    "PGH",     # blanket noqa / type: ignore without a code
+    "ISC",     # implicit string concatenation
+    "PIE",     # misc slop (duplicate class fields, pointless placeholders)
+    "ERA",     # commented-out code
+]
+ignore = [
+    "ISC001",  # conflicts with the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Pytest fixtures and mocks take arguments they don't always use.
+"test/**" = ["ARG"]
+
+[tool.mypy]
+strict = true
+explicit_package_bases = true
+ignore_missing_imports = true
+exclude = ['^\.venv/', '^web/']
+plugins = ["pydantic.mypy"]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["src"]

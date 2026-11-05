@@ -1,0 +1,138 @@
+schema = 1
+
+[project]
+name = "forge dashboard"
+id = "forge-dashboard"
+summary = "Local control room for every project created with forge"
+kind = "app"
+languages = ["python", "typescript"]
+tags = ["forge", "dashboard", "tooling"]
+docs = "README.md"
+
+[v1]
+source = "milestones"
+
+[[v1.milestones]]
+id = "scaffold-gates"
+title = "Repo, forge practices, gates, own manifest"
+done = true
+
+[[v1.milestones]]
+id = "manifest-contract"
+title = "Manifest models, schema, validator CLI, doc"
+weight = 2
+done = false
+
+[[v1.milestones]]
+id = "discovery"
+title = "Roots scan, watcher, registry, unmanifested and forge detection"
+weight = 2
+done = false
+
+[[v1.milestones]]
+id = "supervisor-runner"
+title = "Process module, supervisor, TUI runner, launchers"
+weight = 3
+done = false
+
+[[v1.milestones]]
+id = "services-api"
+title = "Service registry, descriptors, event stream, jobs, scheduler"
+weight = 3
+done = false
+
+[[v1.milestones]]
+id = "git-checks-metrics"
+title = "Git state, local checks with JUnit, metrics with history"
+weight = 3
+done = false
+
+[[v1.milestones]]
+id = "github"
+title = "Auth chain, issues, PRs, Actions, caching, rate limits"
+weight = 3
+done = false
+
+[[v1.milestones]]
+id = "forks"
+title = "Fork detection, prediction, sync worktree flow, agent conflicts, parked runs"
+weight = 4
+done = false
+
+[[v1.milestones]]
+id = "standards"
+title = "Compliance checks, bring-up flow, adopt, template revision"
+weight = 3
+done = false
+
+[[v1.milestones]]
+id = "agents"
+title = "Harness, transcripts, delegate issue, run history, session insight"
+weight = 3
+done = false
+
+[[v1.milestones]]
+id = "web-ui"
+title = "Overview, project page, fork, standards, jobs, settings, schema renderer"
+weight = 5
+done = false
+
+[[v1.milestones]]
+id = "project-services"
+title = "Launch and supervise manifest services, external detection, machine view"
+weight = 3
+done = false
+
+[[v1.milestones]]
+id = "notifications-runs"
+title = "Events, OS notifications, forge runs view, reports"
+weight = 2
+done = false
+
+[[v1.milestones]]
+id = "hardening"
+title = "Empty and error states, performance, docs"
+weight = 2
+done = false
+
+[[checks]]
+id = "pytest"
+label = "Python tests"
+argv = ["uv", "run", "pytest", "-q", "--junitxml", "{report_path}"]
+report = "junit"
+stage = "push"
+timeout_s = 1200
+
+[[checks]]
+id = "bun-test"
+label = "Frontend tests"
+argv = ["bun", "test", "--reporter=junit", "--reporter-outfile={report_path}"]
+cwd = "web"
+report = "junit"
+stage = "push"
+
+[[checks]]
+id = "ruff"
+label = "Ruff lint"
+argv = ["uv", "run", "ruff", "check", "."]
+stage = "commit"
+
+[[checks]]
+id = "mypy"
+label = "mypy --strict"
+argv = ["uv", "run", "mypy", "."]
+stage = "commit"
+
+[[checks]]
+id = "biome"
+label = "Biome check"
+argv = ["bun", "run", "biome", "check", "."]
+cwd = "web"
+stage = "commit"
+
+[[checks]]
+id = "tsc"
+label = "TypeScript"
+argv = ["bun", "run", "tsc", "--noEmit", "-p", "."]
+cwd = "web"
+stage = "commit"
