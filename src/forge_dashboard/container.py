@@ -7,9 +7,11 @@ from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.services.agents import AgentsService
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import DiscoveryService
+from forge_dashboard.services.forge_runs import ForgeRunsService
 from forge_dashboard.services.gallery import GalleryService
 from forge_dashboard.services.git import GitService
 from forge_dashboard.services.jobs import JobsService
+from forge_dashboard.services.machine import MachineService
 from forge_dashboard.services.manifests import ManifestsService
 from forge_dashboard.services.metrics import MetricsService
 from forge_dashboard.services.projects import ProjectsService
@@ -44,6 +46,8 @@ def build_runtime(paths: DataPaths) -> Runtime:
             checks,
             metrics,
             agents,
+            MachineService(runtime, projects),
+            ForgeRunsService(runtime, projects),
             GalleryService(runtime, jobs),
             discovery,
         ]
