@@ -1,5 +1,9 @@
 // Production build of the WebUI into dist/, served by the API.
+import { rmSync } from "node:fs";
 import tailwind from "bun-plugin-tailwind";
+
+// Hashed file names change every build; start from an empty dist/ so old bundles do not pile up.
+rmSync("./dist", { recursive: true, force: true });
 
 const result = await Bun.build({
   entrypoints: ["./src/index.html"],
