@@ -515,7 +515,12 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
                 sync.run.model_copy(update={"conflicted_files": sorted(set(sync.run.conflicted_files) | set(started))})
             )
             if sync.policy.conflicts == "stop":
-                return await self._finish(context, sync, ForkRunState.CONFLICT, f"{len(started)} conflicted files")
+                return await self._finish(
+                    context,
+                    sync,
+                    ForkRunState.CONFLICT,
+                    f"{len(started)} conflicted file{'' if len(started) == 1 else 's'}",
+                )
             resolved, failure = await self._resolve(context, sync, started, extra_instructions)
             if not resolved:
                 return await self._finish(context, sync, ForkRunState.NEEDS_ATTENTION, failure)

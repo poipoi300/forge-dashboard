@@ -205,7 +205,7 @@ async def test_stop_policy_parks_the_conflict_and_abort_cleans_up(
     await discovery.add_project(PathInput(path=str(repos.checkout)))
     await forks.set_policy(PolicyInput(project_id="forked", policy=ForkPolicy(conflicts="stop")))
     status, summary = await _sync(forks, jobs)
-    assert status is JobStatus.ATTENTION and summary == "conflict: 1 conflicted files"
+    assert status is JobStatus.ATTENTION and summary == "conflict: 1 conflicted file"
     [run] = (await forks.history(HistoryInput(project_id="forked"))).runs
     assert run.state is ForkRunState.CONFLICT and run.worktree is not None and Path(run.worktree).is_dir()
     assert projects.summary("forked").attention[-1].message == "fork sync conflict"
