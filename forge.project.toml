@@ -51,7 +51,7 @@ done = true
 id = "github"
 title = "Auth chain, issues, PRs, Actions, caching, rate limits"
 weight = 3
-done = false
+done = true
 
 [[v1.milestones]]
 id = "forks"
