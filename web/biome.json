@@ -8,7 +8,13 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!src/api/schema.d.ts", "!openapi.json", "!src/schema/__fixtures__/*.json"]
+    "includes": [
+      "**",
+      "!src/api/schema.d.ts",
+      "!openapi.json",
+      "!src/schema/__fixtures__/*.json",
+      "!test/fixtures/*.json"
+    ]
   },
   "formatter": {
     "enabled": true,
