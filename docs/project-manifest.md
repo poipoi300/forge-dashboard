@@ -219,8 +219,8 @@ Every `ActionResult` key is optional.
 
 | Key | Type | Meaning |
 |---|---|---|
-| `instructions` | string | Markdown, or a repo-relative path to a `.md` file. Shown as the project's launch and interface instructions. |
-| `primary_service` | service id | The service the Launch button starts (with its dependencies) and opens. |
+| `instructions` | string | Markdown, or a repo-relative path to a `.md` file inside the repo. Shown as the project's launch and interface instructions. When unset, the dashboard shows the README's first setup or run section instead. |
+| `primary_service` | service id | The service the Launch button starts (with its dependencies) and opens. When unset, the first declared service. |
 
 ## `[forge]` (optional, written by tools)
 
