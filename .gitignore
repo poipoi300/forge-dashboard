@@ -21,3 +21,6 @@ web/coverage/
 
 # Runner log dumps
 logs/
+
+# The manifest's dev service keeps its dashboard state here
+.dev-data/

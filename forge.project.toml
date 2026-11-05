@@ -136,3 +136,59 @@ label = "TypeScript"
 argv = ["bun", "run", "tsc", "--noEmit", "-p", "."]
 cwd = "web"
 stage = "commit"
+
+[[services]]
+id = "dashboard"
+label = "Dashboard (dev data)"
+description = "This checkout's API and built UI over .dev-data, so it never touches your real dashboard state."
+argv = ["uv", "run", "-m", "forge_dashboard.server", "--host", "{host}", "--port", "{port}"]
+env = { FORGE_DASHBOARD_DATA_DIR = "{project_root}/.dev-data" }
+port = { policy = "dynamic", preferred = 8770 }
+ready = { kind = "http", path = "/api/health" }
+open = "/"
+
+[[metrics]]
+id = "source-lines"
+label = "Source lines"
+description = "Non-blank hand-written Python and TypeScript"
+unit = "lines"
+pinned = true
+interval_s = 3600
+source = { kind = "command", argv = ["uv", "run", "python", "scripts/metrics.py", "source-lines"] }
+
+[[metrics]]
+id = "bundle-size"
+label = "WebUI bundle"
+description = "Bytes the built WebUI ships, source maps excluded"
+display = "bytes"
+pinned = true
+interval_s = 3600
+thresholds = { warn_above = 2097152 }
+source = { kind = "command", argv = ["uv", "run", "python", "scripts/metrics.py", "bundle-size"] }
+
+[[actions]]
+id = "build-web"
+label = "Build the WebUI"
+description = "bun run build: the bundle the API serves"
+argv = ["bun", "run", "build"]
+cwd = "web"
+timeout_s = 300
+
+[[actions]]
+id = "regenerate-api"
+label = "Regenerate API types and fixtures"
+description = "Rewrite web/openapi.json, the descriptor fixture, and the TypeScript types from the services"
+argv = ["bun", "run", "gen:api"]
+cwd = "web"
+timeout_s = 300
+
+[[actions]]
+id = "validate-manifest"
+label = "Validate a manifest"
+description = "Check any forge.project.toml against the contract"
+argv = ["uv", "run", "python", "scripts/validate_manifest.py"]
+timeout_s = 120
+params = { type = "object", required = ["path"], properties = { path = { type = "string", title = "Manifest or repo folder", "x-ui" = { widget = "path-file" } } } }
+
+[launch]
+primary_service = "dashboard"
