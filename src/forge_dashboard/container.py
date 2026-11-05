@@ -6,6 +6,7 @@ from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.services.discovery import DiscoveryService
 from forge_dashboard.services.gallery import GalleryService
+from forge_dashboard.services.git import GitService
 from forge_dashboard.services.jobs import JobsService
 from forge_dashboard.services.manifests import ManifestsService
 from forge_dashboard.services.projects import ProjectsService
@@ -20,6 +21,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
     discovery = DiscoveryService(runtime, jobs)
     manifests = ManifestsService(runtime)
     projects = ProjectsService(runtime, discovery, manifests)
+    git = GitService(runtime, projects, jobs)
     # Discovery starts last: every project listener must be registered before it publishes candidates.
     runtime.register(
         [
@@ -27,6 +29,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
             scheduler,
             manifests,
             projects,
+            git,
             GalleryService(runtime, jobs),
             discovery,
         ]
