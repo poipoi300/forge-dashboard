@@ -256,8 +256,8 @@ class ForkFacts(BaseModel):
 
 
 class StandardsFacts(BaseModel):
-    passing: int = 0
-    total: int = 0
+    passing: int = Field(0, json_schema_extra=ui(short_label="passing"))
+    total: int = Field(0, json_schema_extra=ui(short_label="of"))
     failing: list[str] = Field(default_factory=list, json_schema_extra=ui(hidden=True))
     drift: bool = Field(False, json_schema_extra=ui(help="Behind forge's HEAD or failing checks."))
     forge_commits_behind: int | None = Field(None, json_schema_extra=ui(short_label="forge commits behind"))
@@ -328,8 +328,16 @@ class V1Progress(BaseModel):
 
 
 class LastChange(BaseModel):
-    at: float | None = Field(None, json_schema_extra=ui(format="relative-time"))
-    source: Literal["commit", "working-tree", "unknown"] = "unknown"
+    """The newer of the last commit and the last working-tree edit, and which one it was."""
+
+    at: float | None = Field(None, json_schema_extra=ui(format="relative-time", short_label=""))
+    source: Literal["commit", "working-tree", "unknown"] = Field(
+        "unknown",
+        json_schema_extra=ui(
+            short_label="",
+            enum_labels={"commit": "commit", "working-tree": "uncommitted edits", "unknown": "unknown source"},
+        ),
+    )
 
 
 class AttentionItem(BaseModel):
@@ -358,12 +366,38 @@ class ProjectSummary(BaseModel):
         default_factory=LastChange, json_schema_extra=ui(slot="status", short_label="changed")
     )
     v1: V1Progress | None = Field(None, json_schema_extra=ui(slot="progress", short_label="V1"))
-    checks: CheckFacts | None = Field(None, json_schema_extra=ui(slot="signals", short_label="checks"))
-    ci: CiFacts | None = Field(None, json_schema_extra=ui(slot="signals", short_label="CI"))
-    issues: IssueFacts | None = Field(None, json_schema_extra=ui(slot="signals", short_label="issues"))
-    git: GitFacts | None = Field(None, json_schema_extra=ui(slot="signals", short_label="git"))
-    fork: ForkFacts | None = Field(None, json_schema_extra=ui(slot="signals", short_label="fork"))
-    standards: StandardsFacts | None = Field(None, json_schema_extra=ui(slot="signals", short_label="standards"))
+    checks: CheckFacts | None = Field(
+        None,
+        json_schema_extra=ui(
+            slot="signals", short_label="checks", columns=["passed", "failed", "coverage_percent", "stale", "ran_at"]
+        ),
+    )
+    ci: CiFacts | None = Field(
+        None,
+        json_schema_extra=ui(slot="signals", short_label="CI", columns=["conclusion", "open_pr_checks", "last_run_at"]),
+    )
+    issues: IssueFacts | None = Field(
+        None,
+        json_schema_extra=ui(slot="signals", short_label="issues", columns=["open_issues", "open_prs", "newest_issue"]),
+    )
+    git: GitFacts | None = Field(
+        None,
+        json_schema_extra=ui(
+            slot="signals", short_label="git", columns=["branch", "dirty", "ahead", "behind", "unpushed", "stashes"]
+        ),
+    )
+    fork: ForkFacts | None = Field(
+        None,
+        json_schema_extra=ui(
+            slot="signals", short_label="fork", columns=["behind_upstream", "last_sync", "next_sync_at"]
+        ),
+    )
+    standards: StandardsFacts | None = Field(
+        None,
+        json_schema_extra=ui(
+            slot="signals", short_label="standards", columns=["passing", "total", "drift", "forge_commits_behind"]
+        ),
+    )
     services: list[ServiceBrief] = Field(
         default_factory=list, json_schema_extra=ui(slot="body", columns=["label", "state", "address"])
     )

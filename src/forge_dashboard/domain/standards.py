@@ -21,6 +21,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from forge_dashboard.core.ui import ui
+from forge_dashboard.domain.launch import readme_run_section
 from forge_dashboard.manifest import load_manifest
 from forge_dashboard.manifest.models import MANIFEST_FILENAME
 
@@ -46,10 +47,6 @@ CI_EVIDENCE: dict[str, tuple[str, ...]] = {
     PUSH_HOOK: ("coverage_gate", "diff-cover"),
 }
 TOOL_FILES = ("tools/repo_hygiene.py", "tools/coverage_gate.sh")
-README_RUN_HEADING = re.compile(
-    r"^#{1,3} .*\b(setup|install|installation|run|running|usage|getting started|quick ?start|launch)\b",
-    re.IGNORECASE | re.MULTILINE,
-)
 _SECTION = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
 
 
@@ -350,7 +347,7 @@ def evaluate(
 
     # 12. README
     readme = _read(project / "README.md")
-    has_run = readme is not None and README_RUN_HEADING.search(readme) is not None
+    has_run = readme is not None and readme_run_section(readme) is not None
     add(
         "readme",
         "README with a setup or run section",

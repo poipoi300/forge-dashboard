@@ -27,7 +27,9 @@ from pydantic import BaseModel, Field
 from forge_dashboard.core.events import Event, Severity
 from forge_dashboard.core.service import ActionError, Done, NoInput, ProjectRef, Service, action
 from forge_dashboard.core.ui import ui
+from forge_dashboard.domain import launch as launch_rules
 from forge_dashboard.domain import summary as rules
+from forge_dashboard.domain.launch import LaunchGuide
 from forge_dashboard.domain.summary import (
     AgentFacts,
     CheckFacts,
@@ -564,6 +566,12 @@ class ProjectsService(Service[ProjectsConfig, ProjectsState]):
             ),
             settings=self.settings(record.id),
         )
+
+    @action(title="Launch instructions", query=True)
+    async def launch_guide(self, request: ProjectRef) -> LaunchGuide:
+        """How to launch and use the project: `[launch].instructions`, else the README's setup or run section."""
+        record = self.record(request.project_id)
+        return await asyncio.to_thread(launch_rules.launch_guide, record.path, record.manifest)
 
     @action(title="All projects", query=True)
     async def list_all(self, _request: NoInput) -> ProjectList:

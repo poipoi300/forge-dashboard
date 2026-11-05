@@ -43,6 +43,7 @@ DisplayFormat = Literal[
     "code",
     "url",
     "path",
+    "markdown",
 ]
 
 Tone = Literal["good", "warn", "bad", "info", "neutral"]
