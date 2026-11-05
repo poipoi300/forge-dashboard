@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
+from forge_dashboard.services.agents import AgentsService
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import DiscoveryService
 from forge_dashboard.services.gallery import GalleryService
@@ -31,6 +32,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
     git = GitService(runtime, projects, jobs)
     checks = ChecksService(runtime, projects, git, jobs, scheduler)
     metrics = MetricsService(runtime, projects, _no_supervised_services)
+    agents = AgentsService(runtime, projects, jobs, checks)
     # Discovery starts last: every project listener must be registered before it publishes candidates.
     runtime.register(
         [
@@ -41,6 +43,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
             git,
             checks,
             metrics,
+            agents,
             GalleryService(runtime, jobs),
             discovery,
         ]

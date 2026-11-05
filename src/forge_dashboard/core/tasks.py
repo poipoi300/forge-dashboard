@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 _log = logging.getLogger("forge_dashboard.tasks")
@@ -35,3 +35,13 @@ class BackgroundTasks:
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+
+
+async def repeat(action: Callable[[], Awaitable[None]], period_s: Callable[[], float], *, label: str) -> None:
+    """Run `action` every `period_s()` seconds forever; a failed run is logged and retried next period."""
+    while True:
+        try:
+            await action()
+        except Exception:  # one failed sample must not end a periodic loop
+            _log.exception("%s failed", label)
+        await asyncio.sleep(period_s())
