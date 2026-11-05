@@ -4,7 +4,7 @@ uv run forge-dashboard list
 uv run forge-dashboard status <project>
 uv run forge-dashboard check <project> [--check ID]
 uv run forge-dashboard sync <project>
-uv run forge-dashboard openapi > web/openapi.json
+uv run forge-dashboard openapi --output web/openapi.json
 uv run forge-dashboard manifest validate path/to/repo
 uv run forge-dashboard manifest schema > schema/forge.project.schema.json
 
@@ -434,14 +434,22 @@ async def _with_backend(handler: Handler, args: argparse.Namespace) -> int:
         return await handler(args, backend)
 
 
-def _openapi() -> int:
-    """Print the API's OpenAPI document; the app is built, not started, over a throwaway data dir."""
+def openapi_text() -> str:
+    """The API's OpenAPI document as JSON; the app is built, not started, over a throwaway data dir."""
     from forge_dashboard.server import build_app
 
     with tempfile.TemporaryDirectory(prefix="forge-dashboard-openapi-") as scratch:
         _runtime, app = build_app(DataPaths(root=Path(scratch)), None, "http://127.0.0.1:0")
         document = app.openapi()
-    sys.stdout.write(json.dumps(document, indent=2) + "\n")
+    return json.dumps(document, indent=2) + "\n"
+
+
+def _openapi(output: Path | None) -> int:
+    text = openapi_text()
+    if output is None:
+        sys.stdout.write(text)
+    else:
+        output.write_text(text, encoding="utf-8", newline="\n")
     return EXIT_OK
 
 
@@ -475,7 +483,8 @@ def build_parser() -> argparse.ArgumentParser:
     sync = commands.add_parser("sync", help="sync a fork with its upstream and stream the output")
     sync.add_argument("project", help="project id (see `list`)")
     sync.set_defaults(handler=_sync)
-    commands.add_parser("openapi", help="print the API's OpenAPI document as JSON")
+    openapi = commands.add_parser("openapi", help="print the API's OpenAPI document as JSON")
+    openapi.add_argument("--output", type=Path, help="write it to this file (LF line endings) instead of stdout")
 
     manifest = commands.add_parser("manifest", help="validate manifests or print the manifest JSON Schema")
     manifest_commands = manifest.add_subparsers(dest="manifest_command", required=True)
@@ -492,7 +501,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _manifest_validate(args.path)
         return _manifest_schema()
     if args.command == "openapi":
-        return _openapi()
+        return _openapi(args.output)
     try:
         return asyncio.run(_with_backend(args.handler, args))
     except CliError as error:

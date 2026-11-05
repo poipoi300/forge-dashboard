@@ -28,6 +28,7 @@ from forge_dashboard.cli import (
     color_enabled,
     exit_code_for,
     main,
+    openapi_text,
     paint,
     render_projects,
     render_status,
@@ -543,3 +544,21 @@ def test_a_full_project_renders_every_signal_in_list_and_status() -> None:
     coloured = render_status(summary, now=now, color=True)
     assert any("\x1b[31mfailing\x1b[0m" in line for line in coloured)
     assert any("\x1b[33m[git] 3 dirty\x1b[0m" in line for line in coloured)
+
+
+def test_openapi_output_writes_the_document_with_lf_line_endings(tmp_path: Path) -> None:
+    target = tmp_path / "openapi.json"
+
+    assert main(["openapi", "--output", str(target)]) == 0
+
+    raw = target.read_bytes()
+    assert b"\r\n" not in raw
+    assert json.loads(raw)["info"]["title"] == "forge dashboard"
+
+
+def test_the_committed_web_openapi_document_matches_the_api() -> None:
+    committed = Path(__file__).resolve().parents[1] / "web" / "openapi.json"
+
+    assert json.loads(committed.read_text(encoding="utf-8")) == json.loads(openapi_text()), (
+        "web/openapi.json is stale: run `bun run gen:api` in web/"
+    )
