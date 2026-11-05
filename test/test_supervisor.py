@@ -10,6 +10,7 @@ import pytest
 
 from forge_dashboard.supervisor import policy
 from forge_dashboard.supervisor.core import (
+    LOG_LINES_KEPT,
     Endpoint,
     LaunchPlan,
     PortRequest,
@@ -267,3 +268,24 @@ def test_endpoint_urls_dial_loopback_for_wildcard_binds() -> None:
     assert Endpoint("0.0.0.0", 8080).url("x") == "http://127.0.0.1:8080/x"
     assert Endpoint("::", 8080).url() == "http://[::1]:8080/"
     assert Endpoint("127.0.0.1", None).url() is None
+
+
+async def test_log_cursor_keeps_reading_after_the_ring_buffer_fills(tmp_path: Path) -> None:
+    count = LOG_LINES_KEPT + 300
+    script = f"import time\nfor i in range({count}): print(f'line {{i}}', flush=True)\ntime.sleep(60)"
+    supervisor = Supervisor([_spec("chatty", [PY, "-c", script], tmp_path)])
+    await supervisor.start("chatty")
+
+    async def all_written() -> None:
+        while supervisor.services["chatty"].lines_written < count:
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(all_written(), 20)
+    lines, first, cursor = supervisor.log_since("chatty", 0)
+    newer, _, unchanged = supervisor.log_since("chatty", cursor)
+    await supervisor.stop_all()
+
+    assert len(lines) == LOG_LINES_KEPT
+    assert first == cursor - LOG_LINES_KEPT
+    assert lines[-1] == f"line {count - 1}"
+    assert (newer, unchanged) == ([], cursor)

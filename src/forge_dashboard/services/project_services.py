@@ -132,9 +132,12 @@ class LogsInput(BaseModel):
 
 
 class ServiceLogs(BaseModel):
+    """Log lines by absolute line number, so a reader can follow a full ring buffer."""
+
     lines: list[str] = Field(json_schema_extra=ui(format="code"))
-    next_offset: int
-    total: int
+    first_offset: int = Field(description="The oldest retained line; earlier ones left the ring buffer.")
+    next_offset: int = Field(description="Pass as `offset` to read only newer lines.")
+    total: int = Field(description="Lines written since the service was registered.")
 
 
 class LaunchResult(BaseModel):
@@ -566,8 +569,9 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
     @action(title="Service log", query=True)
     async def logs(self, request: LogsInput) -> ServiceLogs:
         """The retained output of a service (ANSI colours kept)."""
-        lines = self._supervisor(request.project_id, request.service_id).log_lines(request.service_id)
-        return ServiceLogs(lines=lines[request.offset :], next_offset=len(lines), total=len(lines))
+        supervisor = self._supervisor(request.project_id, request.service_id)
+        lines, first, written = supervisor.log_since(request.service_id, request.offset)
+        return ServiceLogs(lines=lines, first_offset=first, next_offset=written, total=written)
 
     @action(title="Check deployments")
     async def check_deployments(self, _request: NoInput) -> ProjectServicesState:

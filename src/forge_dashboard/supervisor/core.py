@@ -236,6 +236,7 @@ class SupervisedService:
     state: ServiceState = ServiceState.STOPPED
     detail: str = ""
     lines: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_LINES_KEPT))
+    lines_written: int = 0
     restarts: int = 0
     autorestart: bool = True
     endpoint: Endpoint | None = None
@@ -336,6 +337,17 @@ class Supervisor:
 
     def log_lines(self, name: str) -> list[str]:
         return list(self.services[name].lines)
+
+    def log_since(self, name: str, cursor: int) -> tuple[list[str], int, int]:
+        """Lines written at or after absolute line number `cursor`.
+
+        Returns the lines, the first retained line number (lines before it
+        left the ring buffer), and the cursor to pass next time.
+        """
+        service = self.services[name]
+        first = service.lines_written - len(service.lines)
+        start = max(cursor, first) - first
+        return list(service.lines)[start:], first, service.lines_written
 
     def any_active(self) -> bool:
         return any(service.state in ACTIVE_STATES for service in self.services.values())
@@ -615,6 +627,7 @@ class Supervisor:
 
     def _append(self, service: SupervisedService, line: str) -> None:
         service.lines.append(line)
+        service.lines_written += 1
         self._on_line(service.spec.name, line)
         self._on_change()
 
