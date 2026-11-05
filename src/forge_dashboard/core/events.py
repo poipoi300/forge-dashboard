@@ -52,6 +52,10 @@ class Event(BaseModel):
         """When the underlying fact happened, if not now (backfilled commits, CI runs)."""
         return None
 
+    def should_notify(self) -> bool:
+        """Whether this occurrence raises its `notify_kind` (a fork policy may mute success, say)."""
+        return True
+
 
 class EventEnvelope(BaseModel):
     """An event on the wire."""
@@ -90,7 +94,7 @@ class EventBus:
             severity=event.severity(),
             data=event.model_dump(mode="json"),
             persist=event.persist,
-            notify_kind=event.notify_kind,
+            notify_kind=event.notify_kind if event.should_notify() else None,
             dedupe_key=event.dedupe_key(),
         )
         for queue in tuple(self._subscribers):

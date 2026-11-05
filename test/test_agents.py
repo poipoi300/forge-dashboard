@@ -1,13 +1,13 @@
 """The agent harness: argv and transcript parsing, isolated runs, branch work, and session insight."""
 
 import json
-import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
 from conftest import Git
 from pydantic import JsonValue
+from testing_support import fake_harness_config
 
 from forge_dashboard import worktrees
 from forge_dashboard.branchwork import BranchRunState
@@ -35,12 +35,6 @@ from forge_dashboard.services.jobs import JobContext, JobOutcome, JobsService, J
 from forge_dashboard.services.manifests import ManifestsService
 from forge_dashboard.services.projects import ProjectsService
 from forge_dashboard.services.scheduler import SchedulerService
-
-FAKE_HARNESS = Path(__file__).parent / "fixtures" / "fake_harness.py"
-
-
-def fake_harness_config() -> HarnessConfig:
-    return HarnessConfig(command=[sys.executable, str(FAKE_HARNESS)])
 
 
 def test_argv_renders_only_the_options_a_run_sets() -> None:

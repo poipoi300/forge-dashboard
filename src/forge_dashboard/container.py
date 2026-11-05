@@ -8,6 +8,7 @@ from forge_dashboard.services.agents import AgentsService
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import DiscoveryService
 from forge_dashboard.services.forge_runs import ForgeRunsService
+from forge_dashboard.services.forks import ForksService
 from forge_dashboard.services.gallery import GalleryService
 from forge_dashboard.services.git import GitService
 from forge_dashboard.services.jobs import JobsService
@@ -35,6 +36,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
     checks = ChecksService(runtime, projects, git, jobs, scheduler)
     metrics = MetricsService(runtime, projects, _no_supervised_services)
     agents = AgentsService(runtime, projects, jobs, checks)
+    forks = ForksService(runtime, projects, git, jobs, scheduler, checks, agents)
     # Discovery starts last: every project listener must be registered before it publishes candidates.
     runtime.register(
         [
@@ -46,6 +48,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
             checks,
             metrics,
             agents,
+            forks,
             MachineService(runtime, projects),
             ForgeRunsService(runtime, projects),
             GalleryService(runtime, jobs),

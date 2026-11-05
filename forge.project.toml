@@ -57,7 +57,7 @@ done = false
 id = "forks"
 title = "Fork detection, prediction, sync worktree flow, agent conflicts, parked runs"
 weight = 4
-done = false
+done = true
 
 [[v1.milestones]]
 id = "standards"
