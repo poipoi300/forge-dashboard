@@ -53,8 +53,13 @@ def test_hook_ids_tolerate_missing_and_broken_configs(tmp_path: Path) -> None:
 
 
 def test_scan_prunes_dependency_trees_hidden_dirs_and_depth(tmp_path: Path) -> None:
-    for relative in ("a/forge.project.toml", "node_modules/x/forge.project.toml", ".hidden/forge.project.toml",
-                     "b/c/d/e/forge.project.toml", "skip/forge.project.toml"):  # fmt: skip
+    for relative in (
+        "a/forge.project.toml",
+        "node_modules/x/forge.project.toml",
+        ".hidden/forge.project.toml",
+        "b/c/d/e/forge.project.toml",
+        "skip/forge.project.toml",
+    ):
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("", encoding="utf-8")

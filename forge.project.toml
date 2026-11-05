@@ -45,7 +45,7 @@ done = true
 id = "git-checks-metrics"
 title = "Git state, local checks with JUnit, metrics with history"
 weight = 3
-done = false
+done = true
 
 [[v1.milestones]]
 id = "github"

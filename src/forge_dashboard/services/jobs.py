@@ -15,7 +15,8 @@ import json
 import sqlite3
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -209,6 +210,17 @@ class JobContext:
         if result.timed_out:
             self.log(f"timed out after {timeout_s:.0f}s")
         return result
+
+    @asynccontextmanager
+    async def hold(self, resource: str) -> AsyncIterator[None]:
+        """Acquire a resource mid-job, e.g. an agent slot only when a sync actually needs one."""
+        semaphore = self._service._semaphore(resource)
+        if semaphore.locked():
+            self.log(f"waiting for {resource}")
+            self._service._update(self._job, waiting_for=resource)
+        async with semaphore:
+            self._service._update(self._job, waiting_for=None)
+            yield
 
 
 WorkFn = Callable[[JobContext], Awaitable[JobOutcome]]

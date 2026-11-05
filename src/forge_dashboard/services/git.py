@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, override
 
@@ -69,10 +70,18 @@ class FileChange(BaseModel):
     kind: gitparse.ChangeKind = Field(
         json_schema_extra=ui(
             format="badge",
-            tones={"modified": "info", "added": "good", "deleted": "bad", "renamed": "info", "untracked": "neutral",
-                   "conflicted": "bad", "copied": "info", "type-changed": "info"},
+            tones={
+                "modified": "info",
+                "added": "good",
+                "deleted": "bad",
+                "renamed": "info",
+                "untracked": "neutral",
+                "conflicted": "bad",
+                "copied": "info",
+                "type-changed": "info",
+            },
         )
-    )  # fmt: skip
+    )
     staged: bool
     original_path: str | None = None
 
@@ -218,7 +227,12 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
         self._seen_heads: dict[str, str | None] = {}
         self._background = BackgroundTasks()
         self._poll_task: asyncio.Task[None] | None = None
+        self._refresh_listeners: list[Callable[[str, RepoState], None]] = []
         projects.listen(self)
+
+    def on_refreshed(self, listener: Callable[[str, RepoState], None]) -> None:
+        """Call `listener(project_id, state)` after every refresh (staleness depends on HEAD)."""
+        self._refresh_listeners.append(listener)
 
     # --- lifecycle ---
 
@@ -281,6 +295,8 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
             self._repos[record.id] = state
             self._publish_state()
             self._projects.put(record.id, self._facts(state))
+            for listener in self._refresh_listeners:
+                listener(record.id, state)
             return state
 
     async def _read(self, record: ProjectRecord) -> RepoState:
@@ -496,8 +512,12 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
 
     async def _write_job(self, record: ProjectRecord, kind: GitWrite, title: str, argv: list[str]) -> JobRef:
         async def work(context: JobContext) -> JobOutcome:
-            result = await context.run(["git", "-C", str(record.path), *gitops.CONFIG, *argv], record.path,
-                                       gitops.NON_INTERACTIVE, timeout_s=600)  # fmt: skip
+            result = await context.run(
+                ["git", "-C", str(record.path), *gitops.CONFIG, *argv],
+                record.path,
+                gitops.NON_INTERACTIVE,
+                timeout_s=600,
+            )
             await self.refresh(record)
             if not result.ok:
                 return JobOutcome(status=JobStatus.FAILED, summary=f"git {kind} exited {result.exit_code}")
@@ -528,8 +548,9 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
         if branch is None:
             raise ActionError("detached HEAD: name the branch to push", status=409)
         upstream = ["-u"] if branch == current.head and current.upstream is None else []
-        return await self._write_job(record, "push", f"git push {request.remote} {branch}",
-                                     ["push", *upstream, request.remote, branch])  # fmt: skip
+        return await self._write_job(
+            record, "push", f"git push {request.remote} {branch}", ["push", *upstream, request.remote, branch]
+        )
 
     @action(title="Create branch")
     async def create_branch(self, request: BranchInput) -> Done:

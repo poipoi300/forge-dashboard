@@ -129,3 +129,13 @@ def test_path_is_within_rejects_unrelated_paths(tmp_path: Path) -> None:
     assert ports.path_is_within(str(tmp_path / "a" / "b"), tmp_path)
     assert not ports.path_is_within(str(tmp_path.parent), tmp_path)
     assert not ports.path_is_within("\0bad", tmp_path)
+
+
+def test_relative_fragments_never_count_as_inside_a_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert not ports.path_is_within("-k", tmp_path)
+    assert not ports.path_is_within("RPCSS", tmp_path)
+    holder = ports.PortHolder(
+        port=1, pid=1, name="svchost.exe", cmdline=("svchost.exe", "-k", "RPCSS"), cwd=None, create_time=0.0
+    )
+    assert not holder.lives_inside(tmp_path)

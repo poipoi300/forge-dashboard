@@ -49,9 +49,17 @@ class PortHolder:
 
 
 def path_is_within(candidate: str, root: Path) -> bool:
-    """Case-insensitive on Windows; tolerant of quoted or relative fragments, which never match."""
+    """Whether an absolute path lies inside `root`; relative fragments (flags, bare names) never match.
+
+    Relative candidates are rejected rather than resolved: resolving `-k` or
+    `RPCSS` against the dashboard's own cwd would attribute unrelated
+    processes to whichever project the dashboard happens to run from.
+    """
+    path = Path(candidate)
+    if not path.is_absolute():
+        return False
     try:
-        resolved = Path(candidate).resolve()
+        resolved = path.resolve()
     except (OSError, ValueError):
         return False
     return resolved == root.resolve() or root.resolve() in resolved.parents

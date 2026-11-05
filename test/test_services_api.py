@@ -13,9 +13,25 @@ from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import JobRef, NoInput, Service, action
 
 ALL_WIDGETS = {
-    "text", "textarea", "number", "slider", "toggle", "select", "radio-cards", "multiselect", "tags",
-    "path-dir", "path-file", "color", "duration", "cron", "secret", "code", "json", "model-picker",
-}  # fmt: skip
+    "text",
+    "textarea",
+    "number",
+    "slider",
+    "toggle",
+    "select",
+    "radio-cards",
+    "multiselect",
+    "tags",
+    "path-dir",
+    "path-file",
+    "color",
+    "duration",
+    "cron",
+    "secret",
+    "code",
+    "json",
+    "model-picker",
+}
 ALL_FORMATS = {"relative-time", "duration", "bytes", "percent", "progress", "badge", "code", "url", "path"}
 
 

@@ -165,11 +165,16 @@ class IssueFacts(BaseModel):
                 "rate-limited": "github: rate limited",
                 "error": "github: error",
             },
-            tones={"ok": "neutral", "not-on-github": "neutral", "unauthenticated": "warn", "rate-limited": "warn",
-                   "error": "bad"},
+            tones={
+                "ok": "neutral",
+                "not-on-github": "neutral",
+                "unauthenticated": "warn",
+                "rate-limited": "warn",
+                "error": "bad",
+            },
             hidden=True,
         ),
-    )  # fmt: skip
+    )
     repo: str | None = Field(None, json_schema_extra=ui(hidden=True))
     open_issues: int | None = Field(None, json_schema_extra=ui(short_label="issues"))
     open_prs: int | None = Field(None, json_schema_extra=ui(short_label="PRs"))
@@ -537,11 +542,12 @@ def last_change(git: GitFacts | None) -> LastChange:
 def attention_items(facts: ProjectFacts, health: Health) -> list[AttentionItem]:
     """What needs the maintainer: failing health reasons plus parked syncs and unpushed work."""
     items = [
-        AttentionItem(source=reason.source, level="bad" if reason.level is HealthLevel.FAILING else "warn",
-                      message=reason.message)
+        AttentionItem(
+            source=reason.source, level="bad" if reason.level is HealthLevel.FAILING else "warn", message=reason.message
+        )
         for reason in health.reasons
         if reason.level in (HealthLevel.FAILING, HealthLevel.WARN)
-    ]  # fmt: skip
+    ]
     if facts.fork is not None and facts.fork.last_sync in ("conflict", "needs-attention", "ready-to-apply", "failed"):
         level: Literal["warn", "bad"] = "bad" if facts.fork.last_sync in ("conflict", "failed") else "warn"
         items.append(AttentionItem(source="fork", level=level, message=f"fork sync {facts.fork.last_sync}"))

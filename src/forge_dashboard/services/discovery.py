@@ -37,8 +37,21 @@ ChangeListener = Callable[[Path, frozenset[ChangeKind]], Awaitable[None]]
 CandidatesListener = Callable[[list["Candidate"], Path | None], Awaitable[None]]
 
 _GIT_SIGNALS = ("HEAD", "index", "packed-refs", "FETCH_HEAD", "ORIG_HEAD", "MERGE_HEAD")
-_IGNORED_PARTS = frozenset({"node_modules", ".venv", "venv", "target", "__pycache__", ".mypy_cache", ".ruff_cache",
-                            ".pytest_cache", "dist", "coverage", ".coverage"})  # fmt: skip
+_IGNORED_PARTS = frozenset(
+    {
+        "node_modules",
+        ".venv",
+        "venv",
+        "target",
+        "__pycache__",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        "dist",
+        "coverage",
+        ".coverage",
+    }
+)
 WATCH_DEBOUNCE_MS = 800
 
 
