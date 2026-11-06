@@ -176,7 +176,7 @@ export function JobsPage({ jobId }: { jobId: string | undefined }) {
   const shown = jobId ?? active[0]?.id ?? done[0]?.id;
   usePageTitle("Jobs");
   return (
-    <div className="grid max-w-[100rem] gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+    <div className="grid grid-cols-[minmax(0,1fr)] max-w-[100rem] gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
       <h1 className="sr-only">Jobs</h1>
       <div className="flex min-w-0 flex-col gap-6">
         <Section

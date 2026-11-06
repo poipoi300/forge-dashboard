@@ -68,7 +68,7 @@ function CheckDetail({
   return (
     <section
       aria-label={`History of ${label}`}
-      className="grid gap-4 rounded-md border border-rule bg-surface p-3 lg:grid-cols-2"
+      className="grid grid-cols-[minmax(0,1fr)] gap-4 rounded-md border border-rule bg-surface p-3 lg:grid-cols-2"
     >
       <h3 className="text-xs font-medium text-ink-2 lg:col-span-2">History of {label}</h3>
       <QueryState query={history}>
@@ -207,7 +207,7 @@ function CiRuns({ projectId }: { projectId: string }) {
       <QueryState query={runs} errorTitle="GitHub runs could not be read">
         {(data) =>
           data.runs.length ? (
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
               <div className="min-w-0 overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -461,7 +461,7 @@ export function QualityTab({ project }: TabProps) {
         )}
       </Section>
 
-      <div className="grid gap-8 lg:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-2">
         <Section
           title="Gates"
           description="From .pre-commit-config.yaml."
@@ -495,9 +495,9 @@ export function QualityTab({ project }: TabProps) {
                   key={gate.id}
                   className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-1"
                 >
-                  <span className="min-w-0">
+                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
                     <code className="font-mono text-xs whitespace-nowrap">{gate.id}</code>
-                    <span className="ml-2 truncate text-xs text-ink-3">{gate.name}</span>
+                    <span className="truncate text-xs text-ink-3">{gate.name}</span>
                   </span>
                   <span className="flex shrink-0 items-center gap-1.5">
                     {gate.stages.map((stage) => (
@@ -542,7 +542,7 @@ export function QualityTab({ project }: TabProps) {
         <Section title="Coverage">
           {entry?.coverage ? (
             <div className="flex flex-col gap-2">
-              <div className="flex items-baseline justify-between">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                 <span className="figures-open text-[1.75rem] leading-8 font-semibold">
                   {percent(entry.coverage.percent, 1)}
                 </span>

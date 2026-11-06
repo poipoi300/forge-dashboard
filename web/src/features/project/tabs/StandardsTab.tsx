@@ -21,7 +21,7 @@ export function StandardsTab({ project }: TabProps) {
   const adopt = project.role === "unmanifested";
 
   return (
-    <div className="grid gap-8 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-8 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
       <Section
         title="Compliance with forge"
         description={

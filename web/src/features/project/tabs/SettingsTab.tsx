@@ -30,7 +30,7 @@ function SettingRow({
   const root = descriptor ? asSchema(descriptor.input_schema) : null;
   const raw = root?.properties?.[field];
   return (
-    <div className="grid gap-3 border-b border-rule py-3 last:border-b-0 md:grid-cols-[14rem_minmax(0,1fr)_auto]">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-3 border-b border-rule py-3 last:border-b-0 md:grid-cols-[14rem_minmax(0,1fr)_auto]">
       <div>
         <h3 className="text-sm font-medium">{title}</h3>
         <p className="text-xs text-ink-3">{description}</p>

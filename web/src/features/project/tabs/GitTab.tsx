@@ -175,7 +175,7 @@ export function GitTab({ project }: TabProps) {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
         <Section title="Working tree">
           <QueryState query={changes}>
             {(data) =>
@@ -240,7 +240,7 @@ export function GitTab({ project }: TabProps) {
         </Section>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-2">
         <Section title="Recent commits">
           <QueryState query={commits}>
             {(data) => (
@@ -313,7 +313,7 @@ export function GitTab({ project }: TabProps) {
         </Section>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-3">
         <Section title="Worktrees">
           <QueryState query={worktrees}>
             {(data) => (

@@ -255,7 +255,7 @@ export function SettingsPage() {
 
   if (!descriptors) return <LoadingRows rows={8} className="p-5" />;
   return (
-    <div className="max-w-[100rem] grid gap-6 px-5 py-4 md:grid-cols-[13rem_minmax(0,1fr)]">
+    <div className="grid max-w-[100rem] grid-cols-[minmax(0,1fr)] gap-6 px-5 py-4 md:grid-cols-[13rem_minmax(0,1fr)]">
       <h1 className="sr-only">Settings</h1>
       <nav
         aria-label="Settings sections"

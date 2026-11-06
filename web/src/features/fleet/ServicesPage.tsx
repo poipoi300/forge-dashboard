@@ -146,7 +146,7 @@ export function ServicesPage() {
       </Section>
 
       {machine ? (
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <Section
             title={machine.hostname}
             description={`${machine.operating_system}${machine.cpu_count ? ` · ${machine.cpu_count} cores` : ""}`}

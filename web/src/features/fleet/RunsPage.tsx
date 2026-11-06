@@ -69,7 +69,7 @@ export function RunsPage() {
   const [selected, setSelected] = useState<StepRef | null>(null);
   const runs = state?.runs ?? [];
   return (
-    <div className="max-w-[100rem] grid gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+    <div className="grid max-w-[100rem] grid-cols-[minmax(0,1fr)] gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
       <h1 className="sr-only">Forge runs</h1>
       <Section
         title="Forge runs"

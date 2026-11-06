@@ -107,7 +107,7 @@ function Notifications() {
 export function ActivityPage() {
   usePageTitle("Activity");
   return (
-    <div className="max-w-[100rem] grid gap-8 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+    <div className="grid max-w-[100rem] grid-cols-[minmax(0,1fr)] gap-8 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
       <h1 className="sr-only">Activity</h1>
       <Notifications />
       <Section title="Everything, as it happened">

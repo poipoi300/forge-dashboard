@@ -212,7 +212,7 @@ export function ForkTab({ project }: TabProps) {
           <ParkedRunActions run={parked} projectId={project.id} />
         </div>
       ) : null}
-      <div className="grid gap-3 rounded-md border border-rule bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-3 rounded-md border border-rule bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex flex-col gap-1">
           <p className="text-sm">
             upstream{" "}
@@ -292,7 +292,7 @@ export function ForkTab({ project }: TabProps) {
         {status.policy.auto_push ? " and is pushed" : ""}.
       </InfoNote>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-2">
         <Section
           title="What a sync brings"
           description={

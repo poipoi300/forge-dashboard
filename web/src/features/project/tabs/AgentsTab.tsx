@@ -184,7 +184,7 @@ export function AgentsTab({ project }: TabProps) {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="grid gap-8 xl:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-8 xl:grid-cols-2">
         <Section
           title="Claude Code sessions"
           description="Read from ~/.claude/projects for this folder."
