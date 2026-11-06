@@ -162,7 +162,7 @@ function Artifacts({ projectId, isGit }: { projectId: string; isGit: boolean }) 
   const sizes = useAction(
     "/api/services/actions/actions/artifact-sizes",
     { project_id: projectId, allow_without_git: allowWithoutGit },
-    { follow: ["jobs"] },
+    { follow: ["jobs"], enabled: isGit || allowWithoutGit },
   );
   const [chosen, setChosen] = useState<string[]>([]);
   if (!isGit && !allowWithoutGit) {

@@ -99,7 +99,8 @@ to their section.
   boolean flags, always paired with text), `min`/`max`/`step` (sliders),
   `short_label` (dense headers; `""` leaves a value unlabelled), `slot`
   (overview card placement), `hide_zero` (leave zero counts out of dense
-  views), and the `markdown` display format. `columns` also applies to an
+  views), and the `markdown` and `chip` display formats (a chip is a marker someone
+  set, such as a lifecycle status, shown neutral unless it asks for help). `columns` also applies to an
   object-valued field: it picks the sub-fields a dense view shows.
 - **Two composite object formats.** `format: "progress"` reads `done`,
   `total`, `caption`, and an optional `detail` line; `format: "badge"` on an
