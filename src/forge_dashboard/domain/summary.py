@@ -39,8 +39,9 @@ class Lifecycle(StrEnum):
     ARCHIVED = "archived"
 
 
+# A marker the user sets, not a measured state: a neutral chip, toned only when it asks for help.
 LIFECYCLE_UI = ui(
-    format="badge",
+    format="chip",
     enum_labels={status.value: status.value for status in Lifecycle},
     tones={
         "idea": "neutral",
@@ -275,7 +276,9 @@ class StandardsFacts(BaseModel):
     passing: int = Field(0, json_schema_extra=ui(short_label="passing"))
     total: int = Field(0, json_schema_extra=ui(short_label="of"))
     failing: list[str] = Field(default_factory=list, json_schema_extra=ui(hidden=True))
-    drift: bool = Field(False, json_schema_extra=ui(help="Behind forge's HEAD or failing checks."))
+    drift: bool = Field(
+        False, json_schema_extra=ui(short_label="behind forge", help="Behind forge's HEAD or failing checks.")
+    )
     forge_commits_behind: int | None = Field(
         None, json_schema_extra=ui(short_label="forge commits behind", hide_zero=True)
     )
@@ -385,11 +388,12 @@ class ProjectSummary(BaseModel):
     path: str = Field(json_schema_extra=ui(format="path", slot="footer"))
     machine: str = Field(json_schema_extra=ui(slot="footer", short_label="machine"))
     favorite: bool = Field(False, json_schema_extra=ui(hidden=True))
-    status: Lifecycle = Field(Lifecycle.ACTIVE, json_schema_extra=with_hints(LIFECYCLE_UI, slot="status"))
+    status: Lifecycle = Field(Lifecycle.ACTIVE, json_schema_extra=with_hints(LIFECYCLE_UI, slot="status", order=3))
     status_note: str | None = Field(None, json_schema_extra=ui(hidden=True))
-    health: Health = Field(default_factory=Health, json_schema_extra=ui(slot="status", short_label="health"))
+    # Health leads the status slot: it is measured, so it outranks the marker the user set.
+    health: Health = Field(default_factory=Health, json_schema_extra=ui(slot="status", short_label="health", order=2))
     last_change: LastChange = Field(
-        default_factory=LastChange, json_schema_extra=ui(slot="status", short_label="changed")
+        default_factory=LastChange, json_schema_extra=ui(slot="status", short_label="changed", order=4)
     )
     v1: V1Progress | None = Field(None, json_schema_extra=ui(slot="progress", short_label="V1"))
     checks: CheckFacts | None = Field(

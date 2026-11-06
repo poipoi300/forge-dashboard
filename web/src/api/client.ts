@@ -52,6 +52,16 @@ function detailOf(body: unknown, fallback: string): string {
   return fallback;
 }
 
+/** An error response's JSON body, or null when it is not JSON (a proxy's HTML page, say). */
+function errorBody(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (failure) {
+    if (failure instanceof SyntaxError) return null;
+    throw failure;
+  }
+}
+
 export async function request<T>(
   method: "GET" | "POST" | "PUT",
   path: string,
@@ -64,13 +74,12 @@ export async function request<T>(
   }
   const response = await fetch(path, init);
   const text = await response.text();
-  const parsed: unknown = text ? JSON.parse(text) : null;
   if (!response.ok)
     throw new ApiError(
       response.status,
-      detailOf(parsed, `${response.status} ${response.statusText}`),
+      detailOf(errorBody(text), `${response.status} ${response.statusText}`),
     );
-  return parsed as T;
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 /** Call a service action by its literal route; input and output are typed from OpenAPI. */

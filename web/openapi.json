@@ -3051,7 +3051,7 @@
           "checks"
         ],
         "summary": "Run all commit gates",
-        "description": "`pre-commit run --all-files` (fixers may rewrite files, as in a commit).",
+        "description": "`pre-commit run --all-files`. Fixers rewrite files in the working tree in place, uncommitted edits included.",
         "operationId": "checks_run_commit_gates",
         "requestBody": {
           "content": {
@@ -3093,7 +3093,7 @@
           "checks"
         ],
         "summary": "Run gate",
-        "description": "Run one pre-commit hook over all files (fixers may rewrite files, as in a commit).",
+        "description": "Run one pre-commit hook over all files. Fixers rewrite files in the working tree in place, uncommitted edits included.",
         "operationId": "checks_run_gate",
         "requestBody": {
           "content": {
@@ -3135,7 +3135,7 @@
           "checks"
         ],
         "summary": "Run push gate",
-        "description": "`pre-commit run --hook-stage pre-push --all-files`.",
+        "description": "`pre-commit run --hook-stage pre-push --all-files`. Fixers rewrite files in the working tree in place, uncommitted edits included.",
         "operationId": "checks_run_push_gate",
         "requestBody": {
           "content": {
@@ -4677,7 +4677,7 @@
           "forks"
         ],
         "summary": "Fork status and preview",
-        "description": "Behind/ahead, the commits to pull, files changed, and the predicted conflicts.",
+        "description": "Behind/ahead, the commits to pull, files changed, and the predicted conflicts, from the refs already fetched.",
         "operationId": "forks_preview",
         "requestBody": {
           "content": {
@@ -4719,7 +4719,7 @@
           "forks"
         ],
         "summary": "Refresh fork status",
-        "description": "Recompute behind/ahead and the conflict prediction from fetched refs.",
+        "description": "Fetch upstream, then recompute behind/ahead and the conflict prediction.",
         "operationId": "forks_refresh_status",
         "requestBody": {
           "content": {
@@ -6303,7 +6303,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProjectRef"
+                "$ref": "#/components/schemas/ArtifactScope"
               }
             }
           },
@@ -7792,6 +7792,32 @@
           "size_bytes"
         ],
         "title": "Artifact"
+      },
+      "ArtifactScope": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "x-ui": {
+              "bind": "project",
+              "hidden": true
+            }
+          },
+          "allow_without_git": {
+            "type": "boolean",
+            "title": "Allow Without Git",
+            "default": false,
+            "x-ui": {
+              "help": "Only used for a project that is not a git repository. Git is what tells build output from source, so without it nothing is offered unless this is set; then every directory named like build output is, whatever it holds."
+            }
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "ArtifactScope",
+        "description": "Which project's build output to look at, and whether a project without git may be searched."
       },
       "ArtifactSizes": {
         "properties": {
@@ -9440,6 +9466,14 @@
             "x-ui": {
               "bind": "project",
               "hidden": true
+            }
+          },
+          "allow_without_git": {
+            "type": "boolean",
+            "title": "Allow Without Git",
+            "default": false,
+            "x-ui": {
+              "help": "Only used for a project that is not a git repository. Git is what tells build output from source, so without it nothing is offered unless this is set; then every directory named like build output is, whatever it holds."
             }
           },
           "paths": {
@@ -12447,7 +12481,7 @@
             "default": 200,
             "x-ui": {
               "advanced": true,
-              "help": "Runs kept per fork."
+              "help": "Finished runs kept per fork; parked and running runs are never pruned."
             }
           }
         },
@@ -12879,6 +12913,30 @@
               "format": "path"
             }
           },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": "**Markdown** with a [link](https://example.com) and `code`.",
+            "x-ui": {
+              "format": "markdown"
+            }
+          },
+          "marker": {
+            "type": "string",
+            "enum": [
+              "active",
+              "blocked"
+            ],
+            "title": "Marker",
+            "default": "active",
+            "x-ui": {
+              "format": "chip",
+              "tones": {
+                "active": "good",
+                "blocked": "bad"
+              }
+            }
+          },
           "pings": {
             "type": "integer",
             "title": "Pings",
@@ -12898,6 +12956,8 @@
           "commit",
           "link",
           "location",
+          "notes",
+          "marker",
           "pings"
         ]
       },
@@ -14741,7 +14801,7 @@
             "type": "array",
             "title": "Command",
             "x-ui": {
-              "help": "Argv template; may use {prompt} and {prompt_path}.",
+              "help": "Argv template; may use {prompt} and {prompt_path}. Output lines that are not stream-json records go to the job log, so a plain-text agent runs without a transcript or cost.",
               "widget": "tags"
             }
           },
@@ -14758,19 +14818,6 @@
             "default": "{prompt}",
             "x-ui": {
               "help": "Template written to stdin; empty to pass nothing on stdin."
-            }
-          },
-          "output": {
-            "type": "string",
-            "enum": [
-              "stream-json",
-              "text"
-            ],
-            "title": "Output",
-            "default": "stream-json",
-            "x-ui": {
-              "help": "stream-json enables live transcripts and cost.",
-              "widget": "select"
             }
           },
           "model_args": {
@@ -17948,14 +17995,6 @@
               "bind": "project",
               "hidden": true
             }
-          },
-          "fetch": {
-            "type": "boolean",
-            "title": "Fetch",
-            "default": false,
-            "x-ui": {
-              "help": "Fetch upstream first (network)."
-            }
           }
         },
         "type": "object",
@@ -18130,6 +18169,20 @@
               ]
             }
           },
+          "gates_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gates Error",
+            "x-ui": {
+              "help": "Why .pre-commit-config.yaml could not be read, so `gates` is empty."
+            }
+          },
           "coverage": {
             "anyOf": [
               {
@@ -18149,6 +18202,7 @@
           "project_id",
           "checks",
           "gates",
+          "gates_error",
           "coverage",
           "settings"
         ],
@@ -18982,7 +19036,8 @@
                 "planning": "planning",
                 "shipped": "shipped"
               },
-              "format": "badge",
+              "format": "chip",
+              "order": 3,
               "short_label": "status",
               "slot": "status",
               "tones": {
@@ -19014,6 +19069,7 @@
           "health": {
             "$ref": "#/components/schemas/forge_dashboard__domain__summary__Health",
             "x-ui": {
+              "order": 2,
               "short_label": "health",
               "slot": "status"
             }
@@ -19021,6 +19077,7 @@
           "last_change": {
             "$ref": "#/components/schemas/LastChange",
             "x-ui": {
+              "order": 4,
               "short_label": "changed",
               "slot": "status"
             }
@@ -20017,7 +20074,7 @@
         },
         "type": "object",
         "title": "RunKinds",
-        "description": "Per-kind options. Conflict resolution is edit-only; implementation work may run commands."
+        "description": "Per-kind options. Conflict resolution is edit-only; implementation work may run the project's own tools."
       },
       "RunListInput": {
         "properties": {
@@ -21230,7 +21287,8 @@
             "title": "Drift",
             "default": false,
             "x-ui": {
-              "help": "Behind forge's HEAD or failing checks."
+              "help": "Behind forge's HEAD or failing checks.",
+              "short_label": "behind forge"
             }
           },
           "forge_commits_behind": {

@@ -6,7 +6,13 @@ import { absolute, relative, useNow } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { Tone } from "@/schema/schema";
 
-/** A relative time on the shared tick, set in condensed tabular figures; the absolute time is its title. */
+const LEADING_COUNT = /^(in )?(\d+)(.*)$/;
+
+/**
+ * A relative time on the shared tick; the absolute time is its title. Only the
+ * count is set in condensed tabular figures: condensing the unit too made
+ * "20 min ago" read as one word at small sizes.
+ */
 export function RelativeTime({
   at,
   className,
@@ -21,10 +27,22 @@ export function RelativeTime({
     <time
       dateTime={new Date(at * 1000).toISOString()}
       title={absolute(at)}
-      className={cn("figures", className)}
+      className={cn("whitespace-nowrap", className)}
     >
-      {relative(at, now)}
+      <CondensedCount text={relative(at, now)} />
     </time>
+  );
+}
+
+function CondensedCount({ text }: { text: string }) {
+  const match = LEADING_COUNT.exec(text);
+  if (!match) return <>{text}</>;
+  return (
+    <>
+      {match[1]}
+      <span className="figures">{match[2]}</span>
+      {match[3]}
+    </>
   );
 }
 
@@ -74,7 +92,19 @@ export function Meter({
   );
 }
 
-/** A filesystem path shown home-relative, with a copy button. */
+/**
+ * A path as its root plus its last two segments, which is what tells two
+ * checkouts apart ("~/…/Projects/Reelcut-export"); the full path is the title.
+ */
+export function compactPath(path: string): string {
+  const relativePath = homeRelative(path);
+  const parts = relativePath.split("/").filter(Boolean);
+  if (parts.length <= 4) return relativePath;
+  const root = relativePath.startsWith("/") ? `/${parts[0]}` : parts[0];
+  return [root, "…", ...parts.slice(-2)].join("/");
+}
+
+/** A filesystem path shown compactly, with a copy button that appears on hover or focus. */
 export function PathText({ path, className }: { path: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -83,15 +113,15 @@ export function PathText({ path, className }: { path: string; className?: string
     setTimeout(() => setCopied(false), 1200);
   };
   return (
-    <span className={cn("group inline-flex min-w-0 items-center gap-1", className)}>
+    <span className={cn("group relative inline-flex min-w-0 items-center", className)}>
       <span className="truncate font-mono text-2xs text-ink-3" title={path}>
-        {homeRelative(path)}
+        {compactPath(path)}
       </span>
       <button
         type="button"
         onClick={copy}
         aria-label={copied ? "Path copied" : "Copy path"}
-        className="shrink-0 rounded-sm p-0.5 text-ink-3 opacity-0 hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+        className="absolute top-1/2 left-full ml-0.5 flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-ink-3 opacity-0 hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
       >
         {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
       </button>

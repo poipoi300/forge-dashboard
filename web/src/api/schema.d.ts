@@ -1449,7 +1449,7 @@ export interface paths {
         put?: never;
         /**
          * Run all commit gates
-         * @description `pre-commit run --all-files` (fixers may rewrite files, as in a commit).
+         * @description `pre-commit run --all-files`. Fixers rewrite files in the working tree in place, uncommitted edits included.
          */
         post: operations["checks_run_commit_gates"];
         delete?: never;
@@ -1469,7 +1469,7 @@ export interface paths {
         put?: never;
         /**
          * Run gate
-         * @description Run one pre-commit hook over all files (fixers may rewrite files, as in a commit).
+         * @description Run one pre-commit hook over all files. Fixers rewrite files in the working tree in place, uncommitted edits included.
          */
         post: operations["checks_run_gate"];
         delete?: never;
@@ -1489,7 +1489,7 @@ export interface paths {
         put?: never;
         /**
          * Run push gate
-         * @description `pre-commit run --hook-stage pre-push --all-files`.
+         * @description `pre-commit run --hook-stage pre-push --all-files`. Fixers rewrite files in the working tree in place, uncommitted edits included.
          */
         post: operations["checks_run_push_gate"];
         delete?: never;
@@ -2209,7 +2209,7 @@ export interface paths {
         put?: never;
         /**
          * Fork status and preview
-         * @description Behind/ahead, the commits to pull, files changed, and the predicted conflicts.
+         * @description Behind/ahead, the commits to pull, files changed, and the predicted conflicts, from the refs already fetched.
          */
         post: operations["forks_preview"];
         delete?: never;
@@ -2229,7 +2229,7 @@ export interface paths {
         put?: never;
         /**
          * Refresh fork status
-         * @description Recompute behind/ahead and the conflict prediction from fetched refs.
+         * @description Fetch upstream, then recompute behind/ahead and the conflict prediction.
          */
         post: operations["forks_refresh_status"];
         delete?: never;
@@ -3482,6 +3482,19 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
         };
+        /**
+         * ArtifactScope
+         * @description Which project's build output to look at, and whether a project without git may be searched.
+         */
+        ArtifactScope: {
+            /** Project Id */
+            project_id: string;
+            /**
+             * Allow Without Git
+             * @default false
+             */
+            allow_without_git: boolean;
+        };
         /** ArtifactSizes */
         ArtifactSizes: {
             /** Project Id */
@@ -3936,6 +3949,11 @@ export interface components {
         CleanInput: {
             /** Project Id */
             project_id: string;
+            /**
+             * Allow Without Git
+             * @default false
+             */
+            allow_without_git: boolean;
             /** Paths */
             paths: string[];
         };
@@ -4989,6 +5007,17 @@ export interface components {
              */
             location: string;
             /**
+             * Notes
+             * @default **Markdown** with a [link](https://example.com) and `code`.
+             */
+            notes: string;
+            /**
+             * Marker
+             * @default active
+             * @enum {string}
+             */
+            marker: "active" | "blocked";
+            /**
              * Pings
              * @default 0
              */
@@ -5463,12 +5492,6 @@ export interface components {
              * @default {prompt}
              */
             stdin: string | null;
-            /**
-             * Output
-             * @default stream-json
-             * @enum {string}
-             */
-            output: "stream-json" | "text";
             /** Model Args */
             model_args?: string[];
             /** Permission Args */
@@ -6406,11 +6429,6 @@ export interface components {
         PreviewInput: {
             /** Project Id */
             project_id: string;
-            /**
-             * Fetch
-             * @default false
-             */
-            fetch: boolean;
         };
         /**
          * Project
@@ -6479,6 +6497,8 @@ export interface components {
             checks: components["schemas"]["CheckRunSummary"][];
             /** Gates */
             gates: components["schemas"]["Gate"][];
+            /** Gates Error */
+            gates_error: string | null;
             coverage: components["schemas"]["CoverageReport"] | null;
             settings: components["schemas"]["CheckSettings"];
         };
@@ -6933,7 +6953,7 @@ export interface components {
         };
         /**
          * RunKinds
-         * @description Per-kind options. Conflict resolution is edit-only; implementation work may run commands.
+         * @description Per-kind options. Conflict resolution is edit-only; implementation work may run the project's own tools.
          */
         RunKinds: {
             fork_sync?: components["schemas"]["RunKindSettings"];
@@ -12986,7 +13006,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectRef"];
+                "application/json": components["schemas"]["ArtifactScope"];
             };
         };
         responses: {

@@ -17,7 +17,7 @@ import type { SummarySchema } from "./summarySchema";
 
 type ProjectSummary = Schemas["ProjectSummary"];
 
-function fieldValue(project: ProjectSummary, field: Field): unknown {
+export function fieldValue(project: ProjectSummary, field: Field): unknown {
   return (project as unknown as Record<string, unknown>)[field.name];
 }
 
@@ -28,7 +28,7 @@ function present(value: unknown): boolean {
 }
 
 /** Whether a signal would show anything: an object shows its `columns`, and empty, null, and false show nothing. */
-function hasContent(field: Field, value: unknown): boolean {
+export function hasContent(field: Field, value: unknown): boolean {
   if (!present(value)) return false;
   const columns = field.ui.columns;
   if (!columns || typeof value !== "object" || Array.isArray(value)) return true;
@@ -55,6 +55,11 @@ function Meta({ project, layout }: { project: ProjectSummary; layout: SummarySch
       ))}
     </div>
   );
+}
+
+/** A flat series says nothing a sparkline could add, so it gets none. */
+function varies(values: number[]): boolean {
+  return values.length >= 2 && Math.min(...values) !== Math.max(...values);
 }
 
 /** A list field on the card: one compact line per item from the field's `columns`. */
@@ -86,12 +91,14 @@ function BodyList({
             <>
               <span className="truncate text-xs">{String(item.label)}</span>
               <span className="flex items-center gap-2">
-                <Sparkline
-                  values={(item.history as number[] | undefined) ?? []}
-                  label={String(item.label)}
-                  width={56}
-                  height={14}
-                />
+                {varies((item.history as number[] | undefined) ?? []) ? (
+                  <Sparkline
+                    values={(item.history as number[] | undefined) ?? []}
+                    label={String(item.label)}
+                    width={56}
+                    height={14}
+                  />
+                ) : null}
                 <MetricValue metric={item as Schemas["PinnedMetric"]} />
               </span>
             </>
@@ -172,7 +179,7 @@ export const ProjectCard = forwardRef<
               project.favorite ? `Unpin ${project.name}` : `Pin ${project.name} to the top`
             }
             className={cn(
-              "relative z-10 mt-1 shrink-0 rounded-sm text-ink-3 hover:text-ink",
+              "relative z-10 -my-0.5 -ml-1.5 flex size-6 shrink-0 items-center justify-center rounded-sm text-ink-3 hover:text-ink",
               project.favorite
                 ? "text-amber"
                 : "opacity-40 group-hover/card:opacity-100 focus-visible:opacity-100",
@@ -180,12 +187,17 @@ export const ProjectCard = forwardRef<
           >
             <Star className="size-3.5" fill={project.favorite ? "currentColor" : "none"} />
           </button>
-          <Link
-            href={`/p/${project.id}`}
-            className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-ink after:absolute after:inset-0 after:content-[''] hover:underline"
-          >
-            {project.name}
-          </Link>
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            <Link
+              href={`/p/${project.id}`}
+              className="min-w-0 truncate text-base font-semibold tracking-tight text-ink after:absolute after:inset-0 after:content-[''] hover:underline"
+            >
+              {project.name}
+            </Link>
+            <code className="shrink-0 font-mono text-2xs text-ink-3" title="Project id">
+              {project.id}
+            </code>
+          </span>
           {lead ? (
             <span className="mt-0.5 shrink-0">
               <SchemaView
@@ -208,7 +220,7 @@ export const ProjectCard = forwardRef<
               key={field.name}
               className="relative z-10 inline-flex min-w-0 items-baseline gap-1"
             >
-              {field.ui.short_label && field.ui.format !== "badge" ? (
+              {field.ui.short_label && field.ui.format !== "badge" && field.ui.format !== "chip" ? (
                 <span className="text-2xs text-ink-3">
                   {labelOf(field.name, field.schema, true)}
                 </span>
@@ -286,12 +298,11 @@ export const ProjectCard = forwardRef<
       ) : null}
 
       <footer className="relative z-10 mt-auto flex flex-col gap-1.5 border-t border-rule pt-2 compact:pt-1">
-        <div className="flex min-w-0 items-center gap-3 text-2xs text-ink-3">
-          {slot("footer").map((field) => (
-            <span
-              key={field.name}
-              className={cn("flex min-w-0", field.ui.format === "path" ? "flex-1" : "shrink-0")}
-            >
+        {/* Paths get a line of their own: their tail is what tells two checkouts apart. */}
+        {slot("footer")
+          .filter((field) => field.ui.format === "path")
+          .map((field) => (
+            <span key={field.name} className="flex min-w-0 pr-7">
               <SchemaView
                 schema={field.schema}
                 root={root}
@@ -300,6 +311,22 @@ export const ProjectCard = forwardRef<
               />
             </span>
           ))}
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 text-2xs text-ink-3 compact:hidden">
+          {slot("footer")
+            .filter((field) => field.ui.format !== "path")
+            .map((field) => (
+              <span key={field.name} className="inline-flex min-w-0 items-baseline gap-1">
+                {field.ui.short_label && typeof fieldValue(project, field) !== "object" ? (
+                  <span>{labelOf(field.name, field.schema, true)}</span>
+                ) : null}
+                <SchemaView
+                  schema={field.schema}
+                  root={root}
+                  value={fieldValue(project, field)}
+                  dense
+                />
+              </span>
+            ))}
         </div>
         <QuickActions project={project} />
       </footer>

@@ -156,13 +156,28 @@ function CustomAction({ projectId, action }: { projectId: string; action: Action
   );
 }
 
-function Artifacts({ projectId }: { projectId: string }) {
+function Artifacts({ projectId, isGit }: { projectId: string; isGit: boolean }) {
+  // Without git nothing says which folders are disposable, so the user opts in explicitly.
+  const [allowWithoutGit, setAllowWithoutGit] = useState(false);
   const sizes = useAction(
     "/api/services/actions/actions/artifact-sizes",
-    { project_id: projectId },
+    { project_id: projectId, allow_without_git: allowWithoutGit },
     { follow: ["jobs"] },
   );
   const [chosen, setChosen] = useState<string[]>([]);
+  if (!isGit && !allowWithoutGit) {
+    return (
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-sm text-ink-3">
+          This project has no git, so nothing marks which folders are build output. Only folders you
+          knowingly delete are offered.
+        </p>
+        <Button variant="outline" size="xs" onClick={() => setAllowWithoutGit(true)}>
+          Look for build output anyway
+        </Button>
+      </div>
+    );
+  }
   return (
     <QueryState query={sizes}>
       {(data) =>
@@ -203,7 +218,7 @@ function Artifacts({ projectId }: { projectId: string }) {
                 service="actions"
                 action="clean-artifacts"
                 context={{ projectId }}
-                input={{ paths: chosen }}
+                input={{ paths: chosen, allow_without_git: allowWithoutGit }}
                 disabled={!chosen.length}
                 size="xs"
                 variant="destructive"
@@ -215,7 +230,7 @@ function Artifacts({ projectId }: { projectId: string }) {
           </div>
         ) : (
           <p className="text-sm text-ink-3">
-            No build output found (node_modules, .venv, target, dist, caches).
+            No build output found: only folders git ignores entirely are offered.
           </p>
         )
       }
@@ -223,7 +238,7 @@ function Artifacts({ projectId }: { projectId: string }) {
   );
 }
 
-export function ActionsTab({ project }: TabProps) {
+export function ActionsTab({ project, detail }: TabProps) {
   const custom =
     useServiceState("actions")?.projects.find((item) => item.project_id === project.id)?.actions ??
     [];
@@ -284,7 +299,7 @@ export function ActionsTab({ project }: TabProps) {
           </div>
         </Section>
         <Section title="Build output">
-          <Artifacts projectId={project.id} />
+          <Artifacts projectId={project.id} isGit={detail.is_git} />
         </Section>
       </div>
       <Section title="Job history">

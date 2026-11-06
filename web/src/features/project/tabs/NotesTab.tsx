@@ -1,4 +1,5 @@
 // Free-form markdown notes, stored in dashboard state, edited beside a preview.
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ApiError, call } from "@/api/client";
@@ -21,6 +22,7 @@ function Editor({
 }) {
   const [draft, setDraft] = useState(saved);
   const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
   useEffect(() => setDraft(saved), [saved]);
   const dirty = draft !== saved;
   const save = async () => {
@@ -30,6 +32,7 @@ function Editor({
         project_id: projectId,
         markdown: draft,
       });
+      await queryClient.invalidateQueries();
       toast("Notes saved");
     } catch (failure) {
       toast.error("Notes were not saved", {

@@ -44,6 +44,7 @@ DisplayFormat = Literal[
     "url",
     "path",
     "markdown",
+    "chip",
 ]
 
 Tone = Literal["good", "warn", "bad", "info", "neutral"]

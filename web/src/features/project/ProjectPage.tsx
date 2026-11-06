@@ -6,7 +6,8 @@ import { Link, useLocation } from "wouter";
 import type { Schemas } from "@/api/client";
 import { useAction } from "@/api/query";
 import { useServiceState } from "@/api/stream";
-import { PathText, RelativeTime } from "@/components/data";
+import { usePageTitle } from "@/app/title";
+import { Meter, PathText, RelativeTime } from "@/components/data";
 import { GithubMark } from "@/components/icons";
 import { EmptyState, ErrorState, LoadingRows } from "@/components/states";
 import { StatusMark } from "@/components/status";
@@ -14,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useActionRunner } from "@/schema/ActionButton";
 import { SchemaView } from "@/schema/SchemaView";
+import { labelOf, type Tone } from "@/schema/schema";
+import { fieldValue, hasContent } from "../overview/ProjectCard";
 import { useSummarySchema } from "../overview/summarySchema";
 import { QuickActions } from "./QuickActions";
 import { ActionsTab } from "./tabs/ActionsTab";
@@ -99,7 +102,7 @@ function StatusEditor({ project }: { project: ProjectSummary }) {
           service: "projects",
           action: "set-status",
           context: { projectId: project.id },
-          input: { status: project.status, note: project.status_note ?? null },
+          defaults: { status: project.status, note: project.status_note ?? null },
           prompt: true,
         })
       }
@@ -125,8 +128,76 @@ function HealthLine({ project }: { project: ProjectSummary }) {
   const layout = useSummarySchema();
   const field = layout?.fields.find((item) => item.name === "health");
   if (!field || !layout) return null;
-  return <SchemaView schema={field.schema} root={layout.root} value={project.health} dense />;
+  // The reasons are the point of the rollup, so they are written out, not hidden behind a hover.
+  const reasons = project.health.reasons.filter(
+    (reason) => reason.level === "failing" || reason.level === "warn",
+  );
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1.5">
+      <SchemaView schema={field.schema} root={layout.root} value={project.health} dense />
+      {reasons.length ? (
+        <span className="truncate text-xs text-ink-2">
+          {reasons.map((reason) => reason.message).join(" · ")}
+        </span>
+      ) : null}
+    </span>
+  );
 }
+
+/** The card's at-a-glance answers in one line: V1, signals, and services, from the same summary slots. */
+function StateLine({ project }: { project: ProjectSummary }) {
+  const layout = useSummarySchema();
+  if (!layout) return null;
+  const signals = (layout.slots.get("signals") ?? []).filter(
+    (field) => !field.ui.hidden && hasContent(field, fieldValue(project, field)),
+  );
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 border-t border-rule pt-2 text-xs">
+      {project.v1 ? (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-2xs text-ink-3">V1</span>
+          <span className="figures font-semibold">{Math.round(project.v1.percent)}%</span>
+          <Meter
+            value={project.v1.total ? project.v1.done / project.v1.total : 0}
+            tone={project.v1.percent >= 100 ? "good" : "info"}
+            label="V1 progress"
+            className="w-16"
+          />
+          <span className="figures text-ink-3">{project.v1.caption}</span>
+        </span>
+      ) : null}
+      {signals.map((field) => (
+        <span key={field.name} className="inline-flex min-w-0 items-baseline gap-1.5">
+          <span className="text-2xs text-ink-3">{labelOf(field.name, field.schema, true)}</span>
+          <SchemaView
+            schema={field.schema}
+            root={layout.root}
+            value={fieldValue(project, field)}
+            dense
+          />
+        </span>
+      ))}
+      {project.services.map((service) => (
+        <span key={service.id} className="inline-flex items-baseline gap-1.5">
+          <span className="text-2xs text-ink-3">{service.label}</span>
+          <StatusMark tone={SERVICE_TONE[service.state] ?? "neutral"}>{service.state}</StatusMark>
+          {service.address ? <code className="font-mono text-2xs">{service.address}</code> : null}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const SERVICE_TONE: Record<string, Tone> = {
+  running: "good",
+  external: "good",
+  starting: "info",
+  building: "info",
+  backoff: "warn",
+  failed: "bad",
+  "build failed": "bad",
+  blocked: "bad",
+};
 
 function Header({ project, detail }: TabProps) {
   const links = [
@@ -137,18 +208,21 @@ function Header({ project, detail }: TabProps) {
   return (
     <header className="flex flex-col gap-2 border-b border-rule-strong bg-surface px-5 pt-4 pb-3">
       <nav aria-label="Breadcrumb" className="text-2xs text-ink-3">
-        <Link href="/" className="hover:text-ink hover:underline">
+        <Link href="/" className="inline-block py-1 hover:text-ink hover:underline">
           Overview
         </Link>
         <span aria-hidden> / </span>
-        <span>{project.id}</span>
+        <span>{project.name}</span>
       </nav>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <h1 className="text-xl font-semibold tracking-tight text-ink">{project.name}</h1>
-            <StatusEditor project={project} />
+            <code className="font-mono text-xs text-ink-3" title="Project id">
+              {project.id}
+            </code>
             <HealthLine project={project} />
+            <StatusEditor project={project} />
           </div>
           {project.summary ? (
             <p className="max-w-3xl text-sm text-ink-2">{project.summary}</p>
@@ -180,6 +254,7 @@ function Header({ project, detail }: TabProps) {
         </div>
         <QuickActions project={project} size="sm" />
       </div>
+      <StateLine project={project} />
       {detail.manifest_issues.length ? (
         <div
           role="alert"
@@ -204,6 +279,7 @@ export function ProjectPage({ projectId, tab }: { projectId: string; tab: string
   const [, navigate] = useLocation();
   const projects = useServiceState("projects");
   const project = projects?.projects.find((item) => item.id === projectId);
+  usePageTitle(project ? project.name : projectId);
   const detail = useAction(
     "/api/services/projects/actions/detail",
     { project_id: projectId },
@@ -247,7 +323,7 @@ export function ProjectPage({ projectId, tab }: { projectId: string; tab: string
         onValueChange={(value) => navigate(`/p/${project.id}/${value}`)}
         className="gap-0"
       >
-        <div className="sticky top-10 z-10 overflow-x-auto border-b border-rule bg-paper px-5">
+        <div className="sticky top-10 z-10 overflow-x-auto overflow-y-hidden border-b border-rule bg-paper px-5">
           <TabsList className="h-9 gap-1 rounded-none bg-transparent p-0">
             {tabs.map((spec) => (
               <TabsTrigger
@@ -261,7 +337,7 @@ export function ProjectPage({ projectId, tab }: { projectId: string; tab: string
           </TabsList>
         </div>
       </Tabs>
-      <div className="px-5 py-4">
+      <div className="max-w-[100rem] px-5 py-4">
         <Body project={project} detail={data} />
       </div>
     </div>

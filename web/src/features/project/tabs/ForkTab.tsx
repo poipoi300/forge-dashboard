@@ -11,6 +11,7 @@ import { RelativeTime } from "@/components/data";
 import { EmptyState, QueryState, Section } from "@/components/states";
 import { InfoNote, StatusMark } from "@/components/status";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { plural } from "@/lib/format";
 import { duration } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { ActionButton } from "@/schema/ActionButton";
@@ -128,7 +129,7 @@ function RunRow({
       <button
         type="button"
         onClick={onSelect}
-        className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
+        className="-my-1 flex w-full flex-wrap items-center justify-between gap-2 py-1 text-left"
       >
         <span className="flex items-center gap-2">
           <ForkRunState state={run.state} />
@@ -157,10 +158,11 @@ function RunRow({
 
 export function ForkTab({ project }: TabProps) {
   const status = useServiceState("forks")?.forks.find((item) => item.project_id === project.id);
-  const [fetch, setFetch] = useState(false);
+  // A pure read: fetching upstream is the explicit Fetch action, so following the forks
+  // state never makes this query change the state it follows.
   const preview = useAction(
     "/api/services/forks/actions/preview",
-    { project_id: project.id, fetch },
+    { project_id: project.id },
     { follow: ["forks"] },
   );
   const history = useAction(
@@ -178,9 +180,30 @@ export function ForkTab({ project }: TabProps) {
       </EmptyState>
     );
   const selectedRun = history.data?.runs.find((run) => run.id === selected) ?? null;
+  const parked = status.last_run && PARKED.has(status.last_run.state) ? status.last_run : null;
 
   return (
     <div className="flex flex-col gap-8">
+      {parked ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber/50 bg-amber-wash px-3 py-2"
+        >
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <ForkRunState state={parked.state} />
+              {parked.conflicted_files.length
+                ? `in ${parked.conflicted_files.join(", ")}`
+                : (parked.detail ?? "")}
+            </span>
+            <span className="text-xs text-ink-2">
+              The run is parked in its worktree. Apply it, give the agent another try, or abort it
+              before syncing again.
+            </span>
+          </div>
+          <ParkedRunActions run={parked} projectId={project.id} />
+        </div>
+      ) : null}
       <div className="grid gap-3 rounded-md border border-rule bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex flex-col gap-1">
           <p className="text-sm">
@@ -225,17 +248,15 @@ export function ForkTab({ project }: TabProps) {
             service="forks"
             action="sync"
             context={context}
-            variant="default"
+            variant={parked ? "outline" : "default"}
             size="sm"
             icon={<GitMerge />}
             label="Sync now"
-          />
-          <ActionButton
-            service="forks"
-            action="refresh-status"
-            context={context}
-            size="sm"
-            label="Refresh"
+            title={
+              parked
+                ? "A parked run is waiting: apply, retry, or abort it first"
+                : "Merge or rebase upstream in an isolated worktree, then run the checks"
+            }
           />
           <ActionButton
             service="forks"
@@ -263,14 +284,21 @@ export function ForkTab({ project }: TabProps) {
       <div className="grid gap-6 xl:grid-cols-2">
         <Section
           title="What a sync brings"
+          description={
+            status.fetched_at
+              ? undefined
+              : "Upstream has not been fetched yet; this may be out of date."
+          }
           actions={
-            <button
-              type="button"
-              className="text-2xs text-info-ink hover:underline"
-              onClick={() => setFetch(true)}
-            >
-              Fetch upstream first
-            </button>
+            <ActionButton
+              service="forks"
+              action="refresh-status"
+              context={context}
+              size="xs"
+              variant="ghost"
+              label="Fetch upstream"
+              title="Fetch upstream now, then recount and re-predict"
+            />
           }
         >
           <QueryState query={preview}>
@@ -295,7 +323,7 @@ export function ForkTab({ project }: TabProps) {
                   </ul>
                   <details>
                     <summary className="cursor-pointer text-xs text-ink-2">
-                      {data.files.length} files change
+                      {plural(data.files.length, "file")} change
                     </summary>
                     <ul className="mt-1 flex flex-col">
                       {data.files.map((file) => (

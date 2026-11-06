@@ -83,7 +83,7 @@ function UnionField({
           schema={variant.schema}
           root={root}
           value={current}
-          onChange={onChange}
+          onChange={(next) => onChange({ ...asRecord(next), [union.property]: variant.tag })}
           omit={[union.property]}
           nested
         />

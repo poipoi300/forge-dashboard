@@ -3,6 +3,7 @@
 import { Ruler } from "lucide-react";
 import { Link } from "wouter";
 import { useServiceState } from "@/api/stream";
+import { usePageTitle } from "@/app/title";
 import { Meter, RelativeTime } from "@/components/data";
 import { EmptyState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
@@ -10,6 +11,7 @@ import { ActionButton } from "@/schema/ActionButton";
 import { useProjectLabel } from "../project/names";
 
 export function StandardsPage() {
+  usePageTitle("Standards");
   const standards = useServiceState("standards");
   const projects = useServiceState("projects")?.projects ?? [];
   const nameOf = useProjectLabel();
@@ -26,7 +28,8 @@ export function StandardsPage() {
     });
 
   return (
-    <div className="flex flex-col gap-6 px-5 py-4">
+    <div className="max-w-[100rem] flex flex-col gap-6 px-5 py-4">
+      <h1 className="sr-only">Standards</h1>
       <Section
         title="Standards"
         description={
@@ -91,7 +94,16 @@ export function StandardsPage() {
                       </td>
                       <td className="max-w-[22rem] px-2 py-1.5 text-xs text-ink-2">
                         {failing.length ? (
-                          failing.map((check) => check.title).join(" · ")
+                          <ul className="flex flex-col">
+                            {failing.slice(0, 3).map((check) => (
+                              <li key={check.id} className="truncate">
+                                {check.title}
+                              </li>
+                            ))}
+                            {failing.length > 3 ? (
+                              <li className="text-ink-3">and {failing.length - 3} more</li>
+                            ) : null}
+                          </ul>
                         ) : (
                           <span className="text-clear-ink">none</span>
                         )}

@@ -3,6 +3,7 @@
 import { Square } from "lucide-react";
 import { Link } from "wouter";
 import { useServiceState } from "@/api/stream";
+import { usePageTitle } from "@/app/title";
 import { Meter, RelativeTime } from "@/components/data";
 import { EmptyState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
@@ -52,6 +53,7 @@ function Gauge({
 }
 
 export function ServicesPage() {
+  usePageTitle("Services and machine");
   const services = useServiceState("services");
   const machine = useServiceState("machine");
   const nameOf = useProjectLabel();
@@ -59,7 +61,8 @@ export function ServicesPage() {
   const live = list.filter((service) => service.state !== "stopped");
 
   return (
-    <div className="flex flex-col gap-8 px-5 py-4">
+    <div className="max-w-[100rem] flex flex-col gap-8 px-5 py-4">
+      <h1 className="sr-only">Services and machine</h1>
       <Section
         title="Services"
         description={`${live.length} of ${list.length} declared services are up or starting`}

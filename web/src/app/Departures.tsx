@@ -9,8 +9,9 @@ import { cn } from "@/lib/utils";
 /** A station clock face whose red second disc steps on the shared tick; hollow when the stream is down. */
 export function StationClock({ live }: { live: boolean }) {
   const now = useNow();
-  const seconds = new Date(now).getSeconds();
-  const angle = seconds * 6;
+  // Whole seconds since the epoch, not getSeconds(): the angle never wraps from 354 to 0,
+  // so the eased step at the top of the minute moves forward like every other second.
+  const angle = Math.floor(now / 1000) * 6;
   return (
     <svg
       viewBox="0 0 32 32"
@@ -34,7 +35,11 @@ export function StationClock({ live }: { live: boolean }) {
       ))}
       <g
         transform={`rotate(${angle} 16 16)`}
-        style={{ transition: live ? "transform 120ms ease-out" : undefined }}
+        className={
+          live
+            ? "motion-safe:transition-transform motion-safe:duration-[120ms] motion-safe:ease-out"
+            : undefined
+        }
       >
         <line x1="16" y1="18.5" x2="16" y2="8" stroke="var(--signal)" strokeWidth="1.2" />
         <circle
@@ -51,18 +56,26 @@ export function StationClock({ live }: { live: boolean }) {
   );
 }
 
+type CounterTone = "plain" | "warn" | "bad";
+
+const COUNTER_TONE: Record<CounterTone, string> = {
+  plain: "text-board-ink",
+  warn: "text-board-amber",
+  bad: "text-board-signal",
+};
+
 function Counter({
   value,
   label,
   href,
-  alert = false,
+  tone = "plain",
 }: {
   value: number | undefined;
   label: string;
   href: string;
-  alert?: boolean;
+  tone?: CounterTone;
 }) {
-  const hot = alert && (value ?? 0) > 0;
+  const hot = tone !== "plain" && (value ?? 0) > 0;
   return (
     <Link
       href={href}
@@ -71,7 +84,7 @@ function Counter({
       <span
         className={cn(
           "figures-open text-[1.75rem] leading-8 font-semibold",
-          hot ? "text-signal" : "text-board-ink",
+          hot ? COUNTER_TONE[tone] : "text-board-ink",
           value === undefined && "text-board-ink-2",
         )}
       >
@@ -85,16 +98,25 @@ function Counter({
   );
 }
 
+/** Minutes a scheduled departure is overdue, the board's "+n"; null when it is on time. */
+export function lateMinutes(dueAt: number | null | undefined, nowMs: number): number | null {
+  if (dueAt === null || dueAt === undefined) return null;
+  const minutes = Math.floor((nowMs / 1000 - dueAt) / 60);
+  return minutes >= 1 ? minutes : null;
+}
+
 function BoardRow({
   time,
   title,
   detail,
   href,
+  late,
 }: {
   time: string;
   title: string;
   detail?: string | null;
   href: string;
+  late?: number | null;
 }) {
   return (
     <Link
@@ -103,12 +125,27 @@ function BoardRow({
     >
       <span className="figures truncate text-sm font-semibold text-board-ink">{time}</span>
       <span className="truncate text-xs text-board-ink">
+        {late ? (
+          <span
+            className="figures mr-1.5 font-semibold text-board-signal"
+            title={`${late} min late`}
+          >
+            +{late}
+          </span>
+        ) : null}
         {title}
         {detail ? <span className="text-board-ink-2"> · {detail}</span> : null}
       </span>
     </Link>
   );
 }
+
+const ARRIVED: Record<string, string> = {
+  succeeded: "arrived",
+  failed: "failed",
+  cancelled: "cancelled",
+  attention: "needs you",
+};
 
 export function Departures({ compact = false }: { compact?: boolean }) {
   const now = useNow();
@@ -118,9 +155,19 @@ export function Departures({ compact = false }: { compact?: boolean }) {
   const jobs = useServiceState("jobs");
   const totals = projects?.totals;
   const next = (scheduler?.queue ?? []).slice(0, compact ? 1 : 3);
-  const boarding = (jobs?.jobs ?? []).filter((job) => job.status === "running");
+  const allJobs = jobs?.jobs ?? [];
+  const boarding = allJobs.filter((job) => job.status === "running");
+  const arrivals = allJobs
+    .filter((job) => job.ended_at !== null && job.status in ARRIVED)
+    .sort((a, b) => (b.ended_at ?? 0) - (a.ended_at ?? 0))
+    .slice(0, 3);
   const waiting = jobs?.queued ?? 0;
   const live = connection === "live";
+  const failing = totals?.failing ?? 0;
+  // Red only when a failure is on the list; parked or ready runs alone are amber.
+  const attentionBad = (projects?.projects ?? []).some((project) =>
+    project.attention.some((item) => item.level === "bad"),
+  );
 
   if (compact) {
     return (
@@ -134,16 +181,11 @@ export function Departures({ compact = false }: { compact?: boolean }) {
           </span>{" "}
           projects
         </span>
-        <span
-          className={cn(
-            "text-xs",
-            (totals?.failing ?? 0) > 0 ? "text-board-ink" : "text-board-ink-2",
-          )}
-        >
+        <span className={cn("text-xs", failing > 0 ? "text-board-ink" : "text-board-ink-2")}>
           <span
             className={cn(
               "figures text-sm font-semibold",
-              (totals?.failing ?? 0) > 0 ? "text-signal" : "text-board-ink",
+              failing > 0 ? "text-board-signal" : "text-board-ink",
             )}
           >
             {totals?.failing ?? "–"}
@@ -170,7 +212,7 @@ export function Departures({ compact = false }: { compact?: boolean }) {
   return (
     <section
       aria-label="Departures"
-      className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-board-rule bg-board px-5 py-3 text-board-ink lg:grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)]"
+      className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-3 border-b border-board-rule bg-board px-5 py-3 text-board-ink lg:grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)]"
     >
       <div className="flex items-center gap-3">
         <StationClock live={live} />
@@ -181,13 +223,18 @@ export function Departures({ compact = false }: { compact?: boolean }) {
           </span>
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-1 border-board-rule lg:border-l lg:pl-5">
+      <div className="grid grid-cols-4 gap-1 border-l border-board-rule pl-5">
         <Counter value={totals?.projects} label="projects" href="/" />
-        <Counter value={totals?.failing} label="failing" href="/?health=failing" alert />
+        <Counter value={totals?.failing} label="failing" href="/?health=failing" tone="bad" />
         <Counter value={totals?.running_services} label="services up" href="/services" />
-        <Counter value={totals?.attention} label="need attention" href="/?attention=1" alert />
+        <Counter
+          value={totals?.attention}
+          label="need attention"
+          href="/?attention=1"
+          tone={attentionBad ? "bad" : "warn"}
+        />
       </div>
-      <div className="min-w-0 border-board-rule lg:border-l lg:pl-5">
+      <div className="hidden min-w-0 border-l border-board-rule pl-5 lg:block">
         <h2 className="mb-1 text-2xs text-board-ink-2">Next departures</h2>
         {next.length ? (
           next.map((entry) => (
@@ -197,17 +244,16 @@ export function Departures({ compact = false }: { compact?: boolean }) {
               title={entry.title}
               detail={entry.project_id}
               href={entry.project_id ? `/p/${entry.project_id}` : "/jobs"}
+              late={lateMinutes(entry.next_run_at, now)}
             />
           ))
         ) : (
-          <p className="px-1 text-xs text-board-ink-2">
-            Nothing scheduled. Fork syncs and checks can run on a schedule.
-          </p>
+          <p className="px-1 text-xs text-board-ink-2">Nothing scheduled.</p>
         )}
       </div>
-      <div className="min-w-0 border-board-rule lg:border-l lg:pl-5">
+      <div className="hidden min-w-0 border-l border-board-rule pl-5 lg:block">
         <h2 className="mb-1 text-2xs text-board-ink-2">
-          Boarding now
+          {boarding.length ? "Boarding now" : "Recent arrivals"}
           {waiting ? <span className="text-board-ink"> · {waiting} waiting</span> : null}
         </h2>
         {boarding.length ? (
@@ -228,8 +274,18 @@ export function Departures({ compact = false }: { compact?: boolean }) {
                 href={`/jobs/${job.id}`}
               />
             ))
+        ) : arrivals.length ? (
+          arrivals.map((job) => (
+            <BoardRow
+              key={job.id}
+              time={job.ended_at ? clockTime(job.ended_at * 1000).slice(0, 5) : ""}
+              title={job.title}
+              detail={ARRIVED[job.status]}
+              href={`/jobs/${job.id}`}
+            />
+          ))
         ) : (
-          <p className="px-1 text-xs text-board-ink-2">No jobs running.</p>
+          <p className="px-1 text-xs text-board-ink-2">No jobs yet.</p>
         )}
       </div>
     </section>

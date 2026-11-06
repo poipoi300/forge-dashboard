@@ -3,7 +3,7 @@ import { Check, Minus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Meter, PathText, RelativeTime } from "@/components/data";
 import { Markdown } from "@/components/Markdown";
-import { StatusMark, TONE_TEXT } from "@/components/status";
+import { Chip, StatusMark, TONE_TEXT } from "@/components/status";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { bytes, count, percent } from "@/lib/format";
 import { duration } from "@/lib/time";
@@ -18,6 +18,7 @@ import {
   resolve,
   type Tone,
   toneFor,
+  variants,
 } from "./schema";
 
 export interface ViewProps {
@@ -60,7 +61,10 @@ function ObjectBadge({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" className="inline-flex rounded-sm text-left focus-visible:outline-2">
+        <button
+          type="button"
+          className="-my-1 inline-flex rounded-sm py-1 text-left focus-visible:outline-2"
+        >
           <Badge schema={level.schema} value={value.level} />
         </button>
       </TooltipTrigger>
@@ -305,6 +309,20 @@ export function SchemaView({ schema: raw, root, value, dense = false }: ViewProp
     }
     case "path":
       return <PathText path={String(value)} />;
+    case "chip": {
+      // A marker someone set (a lifecycle status), not a measurement: neutral unless it asks for help.
+      const tone = toneFor(schema, value);
+      return (
+        <Chip
+          className={cn(
+            tone === "bad" && "border-signal/40 text-signal-ink",
+            tone === "warn" && "border-amber/50 text-amber-ink",
+          )}
+        >
+          {enumLabel(schema, value)}
+        </Chip>
+      );
+    }
     case "markdown":
       return dense ? (
         <span className="truncate">{String(value)}</span>
@@ -339,12 +357,34 @@ export function SchemaView({ schema: raw, root, value, dense = false }: ViewProp
     const items = schema.items ? resolve(schema.items, root).schema : {};
     if (kindOf(items, root) === "object") {
       if (dense) {
+        if (!value.length) return EMPTY;
+        // One line per item from the list's `columns`, values only: a table column already names them.
+        const itemFields = fields(items, root);
+        const columns = (
+          ui.columns ?? itemFields.filter((field) => !field.ui.hidden).map((field) => field.name)
+        ).flatMap((name) => itemFields.filter((field) => field.name === name));
         return (
           <span className="flex flex-col gap-0.5">
-            {value.map((item, index) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: generic list rendering
-              <SchemaView key={index} schema={items} root={root} value={item} dense />
-            ))}
+            {value.map((item, index) => {
+              const record = isRecord(item) ? item : {};
+              return (
+                <span
+                  // biome-ignore lint/suspicious/noArrayIndexKey: generic list rendering, items carry no identity
+                  key={index}
+                  className="inline-flex min-w-0 items-baseline gap-2 whitespace-nowrap"
+                >
+                  {columns.map((column) => (
+                    <SchemaView
+                      key={column.name}
+                      schema={column.schema}
+                      root={root}
+                      value={record[column.name]}
+                      dense
+                    />
+                  ))}
+                </span>
+              );
+            })}
           </span>
         );
       }
@@ -366,10 +406,14 @@ export function SchemaView({ schema: raw, root, value, dense = false }: ViewProp
     );
   }
   if ((kind === "object" || kind === "union") && isRecord(value)) {
+    // A union has no properties of its own: show the fields of the variant the value's tag names.
+    const union = kind === "union" ? variants(schema, root) : null;
+    const shown =
+      union?.variants.find((variant) => variant.tag === value[union.property])?.schema ?? schema;
     return dense ? (
-      <InlineObject schema={schema} root={root} value={value} />
+      <InlineObject schema={shown} root={root} value={value} />
     ) : (
-      <DefinitionList schema={schema} root={root} value={value} />
+      <DefinitionList schema={shown} root={root} value={value} />
     );
   }
   if (kind === "map" && isRecord(value)) {

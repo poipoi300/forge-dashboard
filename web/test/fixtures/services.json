@@ -6277,7 +6277,8 @@
                   "planning": "planning",
                   "shipped": "shipped"
                 },
-                "format": "badge",
+                "format": "chip",
+                "order": 3,
                 "short_label": "status",
                 "slot": "status",
                 "tones": {
@@ -6310,6 +6311,7 @@
             "health": {
               "$ref": "#/$defs/Health",
               "x-ui": {
+                "order": 2,
                 "short_label": "health",
                 "slot": "status"
               }
@@ -6317,6 +6319,7 @@
             "last_change": {
               "$ref": "#/$defs/LastChange",
               "x-ui": {
+                "order": 4,
                 "short_label": "changed",
                 "slot": "status"
               }
@@ -6675,7 +6678,8 @@
               "title": "Drift",
               "type": "boolean",
               "x-ui": {
-                "help": "Behind forge's HEAD or failing checks."
+                "help": "Behind forge's HEAD or failing checks.",
+                "short_label": "behind forge"
               }
             },
             "forge_commits_behind": {
@@ -9188,7 +9192,8 @@
                       "planning": "planning",
                       "shipped": "shipped"
                     },
-                    "format": "badge",
+                    "format": "chip",
+                    "order": 3,
                     "short_label": "status",
                     "slot": "status",
                     "tones": {
@@ -9221,6 +9226,7 @@
                 "health": {
                   "$ref": "#/$defs/Health",
                   "x-ui": {
+                    "order": 2,
                     "short_label": "health",
                     "slot": "status"
                   }
@@ -9228,6 +9234,7 @@
                 "last_change": {
                   "$ref": "#/$defs/LastChange",
                   "x-ui": {
+                    "order": 4,
                     "short_label": "changed",
                     "slot": "status"
                   }
@@ -9736,7 +9743,8 @@
                   "title": "Drift",
                   "type": "boolean",
                   "x-ui": {
-                    "help": "Behind forge's HEAD or failing checks."
+                    "help": "Behind forge's HEAD or failing checks.",
+                    "short_label": "behind forge"
                   }
                 },
                 "forge_commits_behind": {
@@ -11326,7 +11334,8 @@
                       "planning": "planning",
                       "shipped": "shipped"
                     },
-                    "format": "badge",
+                    "format": "chip",
+                    "order": 3,
                     "short_label": "status",
                     "slot": "status",
                     "tones": {
@@ -11359,6 +11368,7 @@
                 "health": {
                   "$ref": "#/$defs/Health",
                   "x-ui": {
+                    "order": 2,
                     "short_label": "health",
                     "slot": "status"
                   }
@@ -11366,6 +11376,7 @@
                 "last_change": {
                   "$ref": "#/$defs/LastChange",
                   "x-ui": {
+                    "order": 4,
                     "short_label": "changed",
                     "slot": "status"
                   }
@@ -11724,7 +11735,8 @@
                   "title": "Drift",
                   "type": "boolean",
                   "x-ui": {
-                    "help": "Behind forge's HEAD or failing checks."
+                    "help": "Behind forge's HEAD or failing checks.",
+                    "short_label": "behind forge"
                   }
                 },
                 "forge_commits_behind": {
@@ -17215,6 +17227,21 @@
                 ]
               }
             },
+            "gates_error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Gates Error",
+              "x-ui": {
+                "help": "Why .pre-commit-config.yaml could not be read, so `gates` is empty."
+              }
+            },
             "coverage": {
               "anyOf": [
                 {
@@ -17917,7 +17944,7 @@
       {
         "id": "run-commit-gates",
         "title": "Run all commit gates",
-        "description": "`pre-commit run --all-files` (fixers may rewrite files, as in a commit).",
+        "description": "`pre-commit run --all-files`. Fixers rewrite files in the working tree in place, uncommitted edits included.",
         "input_schema": {
           "description": "Input naming one project; the UI fills it from the page it is on.",
           "properties": {
@@ -17962,13 +17989,13 @@
         },
         "long_running": true,
         "danger": false,
-        "confirm": false,
+        "confirm": true,
         "query": false
       },
       {
         "id": "run-gate",
         "title": "Run gate",
-        "description": "Run one pre-commit hook over all files (fixers may rewrite files, as in a commit).",
+        "description": "Run one pre-commit hook over all files. Fixers rewrite files in the working tree in place, uncommitted edits included.",
         "input_schema": {
           "properties": {
             "project_id": {
@@ -18017,13 +18044,13 @@
         },
         "long_running": true,
         "danger": false,
-        "confirm": false,
+        "confirm": true,
         "query": false
       },
       {
         "id": "run-push-gate",
         "title": "Run push gate",
-        "description": "`pre-commit run --hook-stage pre-push --all-files`.",
+        "description": "`pre-commit run --hook-stage pre-push --all-files`. Fixers rewrite files in the working tree in place, uncommitted edits included.",
         "input_schema": {
           "description": "Input naming one project; the UI fills it from the page it is on.",
           "properties": {
@@ -18068,7 +18095,7 @@
         },
         "long_running": true,
         "danger": false,
-        "confirm": false,
+        "confirm": true,
         "query": false
       },
       {
@@ -20975,7 +21002,7 @@
               "title": "Command",
               "type": "array",
               "x-ui": {
-                "help": "Argv template; may use {prompt} and {prompt_path}.",
+                "help": "Argv template; may use {prompt} and {prompt_path}. Output lines that are not stream-json records go to the job log, so a plain-text agent runs without a transcript or cost.",
                 "widget": "tags"
               }
             },
@@ -20992,19 +21019,6 @@
               "title": "Stdin",
               "x-ui": {
                 "help": "Template written to stdin; empty to pass nothing on stdin."
-              }
-            },
-            "output": {
-              "default": "stream-json",
-              "enum": [
-                "stream-json",
-                "text"
-              ],
-              "title": "Output",
-              "type": "string",
-              "x-ui": {
-                "help": "stream-json enables live transcripts and cost.",
-                "widget": "select"
               }
             },
             "model_args": {
@@ -21143,7 +21157,7 @@
           "type": "object"
         },
         "RunKinds": {
-          "description": "Per-kind options. Conflict resolution is edit-only; implementation work may run commands.",
+          "description": "Per-kind options. Conflict resolution is edit-only; implementation work may run the project's own tools.",
           "properties": {
             "fork_sync": {
               "$ref": "#/$defs/RunKindSettings",
@@ -24578,7 +24592,7 @@
           "type": "integer",
           "x-ui": {
             "advanced": true,
-            "help": "Runs kept per fork."
+            "help": "Finished runs kept per fork; parked and running runs are never pruned."
           }
         }
       },
@@ -25783,7 +25797,7 @@
       {
         "id": "preview",
         "title": "Fork status and preview",
-        "description": "Behind/ahead, the commits to pull, files changed, and the predicted conflicts.",
+        "description": "Behind/ahead, the commits to pull, files changed, and the predicted conflicts, from the refs already fetched.",
         "input_schema": {
           "properties": {
             "project_id": {
@@ -25792,14 +25806,6 @@
               "x-ui": {
                 "bind": "project",
                 "hidden": true
-              }
-            },
-            "fetch": {
-              "default": false,
-              "title": "Fetch",
-              "type": "boolean",
-              "x-ui": {
-                "help": "Fetch upstream first (network)."
               }
             }
           },
@@ -26650,7 +26656,7 @@
       {
         "id": "refresh-status",
         "title": "Refresh fork status",
-        "description": "Recompute behind/ahead and the conflict prediction from fetched refs.",
+        "description": "Fetch upstream, then recompute behind/ahead and the conflict prediction.",
         "input_schema": {
           "description": "Input naming one project; the UI fills it from the page it is on.",
           "properties": {
@@ -32533,6 +32539,30 @@
             "format": "path"
           }
         },
+        "notes": {
+          "default": "**Markdown** with a [link](https://example.com) and `code`.",
+          "title": "Notes",
+          "type": "string",
+          "x-ui": {
+            "format": "markdown"
+          }
+        },
+        "marker": {
+          "default": "active",
+          "enum": [
+            "active",
+            "blocked"
+          ],
+          "title": "Marker",
+          "type": "string",
+          "x-ui": {
+            "format": "chip",
+            "tones": {
+              "active": "good",
+              "blocked": "bad"
+            }
+          }
+        },
         "pings": {
           "default": 0,
           "title": "Pings",
@@ -33650,7 +33680,7 @@
         "title": "Artifact sizes",
         "description": "Sizes of the project's build output and caches (.venv, node_modules, target, caches, dist, ...).",
         "input_schema": {
-          "description": "Input naming one project; the UI fills it from the page it is on.",
+          "description": "Which project's build output to look at, and whether a project without git may be searched.",
           "properties": {
             "project_id": {
               "title": "Project Id",
@@ -33659,12 +33689,20 @@
                 "bind": "project",
                 "hidden": true
               }
+            },
+            "allow_without_git": {
+              "default": false,
+              "title": "Allow Without Git",
+              "type": "boolean",
+              "x-ui": {
+                "help": "Only used for a project that is not a git repository. Git is what tells build output from source, so without it nothing is offered unless this is set; then every directory named like build output is, whatever it holds."
+              }
             }
           },
           "required": [
             "project_id"
           ],
-          "title": "ProjectRef",
+          "title": "ArtifactScope",
           "type": "object"
         },
         "output_schema": {
@@ -33756,6 +33794,14 @@
               "x-ui": {
                 "bind": "project",
                 "hidden": true
+              }
+            },
+            "allow_without_git": {
+              "default": false,
+              "title": "Allow Without Git",
+              "type": "boolean",
+              "x-ui": {
+                "help": "Only used for a project that is not a git repository. Git is what tells build output from source, so without it nothing is offered unless this is set; then every directory named like build output is, whatever it holds."
               }
             },
             "paths": {

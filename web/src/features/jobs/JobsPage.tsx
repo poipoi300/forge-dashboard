@@ -6,9 +6,11 @@ import type { Schemas } from "@/api/client";
 import { useJobLog } from "@/api/logs";
 import { useAction } from "@/api/query";
 import { useServiceState } from "@/api/stream";
+import { usePageTitle } from "@/app/title";
 import { Meter, RelativeTime } from "@/components/data";
 import { LogView } from "@/components/LogView";
 import { EmptyState, ErrorState, QueryState, Section } from "@/components/states";
+import { Button } from "@/components/ui/button";
 import { duration, useNow } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { ActionButton } from "@/schema/ActionButton";
@@ -61,6 +63,25 @@ function JobRow({ job, selected }: { job: Job; selected?: boolean }) {
   );
 }
 
+/** Where a job's work lives on its project page: a parked sync waits on the Fork tab, and so on. */
+const JOB_TAB: Record<string, string> = {
+  forks: "fork",
+  standards: "standards",
+  agents: "agents",
+  checks: "quality",
+  services: "launch",
+  actions: "actions",
+  git: "git",
+  github: "issues",
+  metrics: "metrics",
+};
+
+export function jobPagePath(job: { kind: string; project_id?: string | null }): string | null {
+  if (!job.project_id) return null;
+  const tab = JOB_TAB[job.kind.split(".")[0] ?? ""];
+  return tab ? `/p/${job.project_id}/${tab}` : `/p/${job.project_id}`;
+}
+
 function JobDetail({ jobId }: { jobId: string }) {
   const detail = useAction("/api/services/jobs/actions/get", { job_id: jobId }, { live: true });
   const log = useJobLog(jobId);
@@ -79,7 +100,10 @@ function JobDetail({ jobId }: { jobId: string }) {
                 {job.project_id ? (
                   <>
                     {" · "}
-                    <Link href={`/p/${job.project_id}`} className="hover:underline">
+                    <Link
+                      href={jobPagePath(job) ?? `/p/${job.project_id}`}
+                      className="hover:underline"
+                    >
                       {job.project_id}
                     </Link>
                   </>
@@ -92,6 +116,11 @@ function JobDetail({ jobId }: { jobId: string }) {
             {job.summary ? <p className="mt-1 text-sm">{job.summary}</p> : null}
             {job.error ? <p className="mt-1 text-sm text-signal-ink">{job.error}</p> : null}
           </div>
+          {job.status === "attention" && jobPagePath(job) ? (
+            <Button asChild size="xs" variant="default">
+              <Link href={jobPagePath(job) ?? "/"}>Resolve on the project page</Link>
+            </Button>
+          ) : null}
           {job.status === "running" || job.status === "queued" ? (
             <ActionButton
               service="jobs"
@@ -135,8 +164,12 @@ export function JobsPage({ jobId }: { jobId: string | undefined }) {
   const done = (history.data?.jobs ?? []).filter(
     (job) => job.status !== "running" && job.status !== "queued",
   );
+  // With nothing picked, show the job most likely wanted: one running now, else the latest.
+  const shown = jobId ?? active[0]?.id ?? done[0]?.id;
+  usePageTitle("Jobs");
   return (
-    <div className="grid gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+    <div className="grid max-w-[100rem] gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+      <h1 className="sr-only">Jobs</h1>
       <div className="flex min-w-0 flex-col gap-6">
         <Section
           title="Now"
@@ -145,7 +178,7 @@ export function JobsPage({ jobId }: { jobId: string | undefined }) {
           {active.length ? (
             <ul className="flex flex-col divide-y divide-rule rounded-md border border-rule bg-surface">
               {active.map((job) => (
-                <JobRow key={job.id} job={job} selected={job.id === jobId} />
+                <JobRow key={job.id} job={job} selected={job.id === shown} />
               ))}
             </ul>
           ) : (
@@ -158,7 +191,7 @@ export function JobsPage({ jobId }: { jobId: string | undefined }) {
               done.length ? (
                 <ul className="flex flex-col divide-y divide-rule rounded-md border border-rule bg-surface">
                   {done.map((job) => (
-                    <JobRow key={job.id} job={job} selected={job.id === jobId} />
+                    <JobRow key={job.id} job={job} selected={job.id === shown} />
                   ))}
                 </ul>
               ) : (
@@ -171,11 +204,7 @@ export function JobsPage({ jobId }: { jobId: string | undefined }) {
         </Section>
       </div>
       <div className="min-w-0 xl:sticky xl:top-14 xl:self-start">
-        {jobId ? (
-          <JobDetail key={jobId} jobId={jobId} />
-        ) : (
-          <p className="pt-8 text-sm text-ink-3">Select a job for its log.</p>
-        )}
+        {shown ? <JobDetail key={shown} jobId={shown} /> : null}
       </div>
     </div>
   );

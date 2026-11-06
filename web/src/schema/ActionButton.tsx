@@ -114,7 +114,7 @@ async function execute(
       request.action,
       bindContext(schema, schema, payload, request.context ?? {}),
     );
-    if (isJobRef(output)) {
+    if (descriptor.long_running && isJobRef(output)) {
       const jobId = output.job_id;
       toast(`Started: ${output.title}`, {
         action: { label: "View job", onClick: () => navigate(`/jobs/${jobId}`) },

@@ -15,6 +15,8 @@ interface NavItem {
   label: string;
   icon: typeof LayoutGrid;
   count?: number;
+  /** What the count counts, for its tooltip and screen readers. */
+  countLabel?: string;
   alert?: boolean;
 }
 
@@ -32,11 +34,11 @@ function useNavItems(): NavItem[] {
   const running = (services?.services ?? []).filter(
     (item) => item.state === "running" || item.state === "external",
   ).length;
-  const counts: Partial<Record<PageId, Pick<NavItem, "count" | "alert">>> = {
-    jobs: { count: (jobs?.running ?? 0) + (jobs?.queued ?? 0) },
-    forks: { count: parked, alert: parked > 0 },
-    standards: { count: drifting },
-    services: { count: running },
+  const counts: Partial<Record<PageId, Pick<NavItem, "count" | "countLabel" | "alert">>> = {
+    jobs: { count: (jobs?.running ?? 0) + (jobs?.queued ?? 0), countLabel: "running or waiting" },
+    forks: { count: parked, countLabel: "parked syncs waiting on you", alert: parked > 0 },
+    standards: { count: drifting, countLabel: "projects behind forge's standards" },
+    services: { count: running, countLabel: "services up" },
   };
   return PAGES.map((page) => ({
     href: page.href,
@@ -70,12 +72,14 @@ function NavLink({
       <span className="flex-1 truncate">{item.label}</span>
       {item.count ? (
         <span
+          title={`${item.count} ${item.countLabel ?? ""}`.trim()}
           className={cn(
             "figures text-xs",
-            item.alert ? "font-semibold text-signal" : "text-board-ink-2",
+            item.alert ? "font-semibold text-board-signal" : "text-board-ink-2",
           )}
         >
           {item.count}
+          <span className="sr-only"> {item.countLabel}</span>
         </span>
       ) : null}
     </Link>
@@ -158,7 +162,12 @@ function Rail({ onNavigate }: { onNavigate?: () => void }) {
           <Bell aria-hidden className="size-4" strokeWidth={1.75} />
           <span className="flex-1">Notifications</span>
           {unread ? (
-            <span className="figures text-xs font-semibold text-signal">{unread}</span>
+            <span
+              className="figures text-xs font-semibold text-board-signal"
+              title={`${unread} unread`}
+            >
+              {unread}
+            </span>
           ) : null}
         </Link>
         <p className="px-2.5 text-2xs text-board-ink-2">

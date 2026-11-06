@@ -4,15 +4,18 @@
 import { GitMerge, Pause, Play } from "lucide-react";
 import { Link } from "wouter";
 import { useServiceState } from "@/api/stream";
+import { usePageTitle } from "@/app/title";
 import { RelativeTime } from "@/components/data";
 import { EmptyState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
+import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ActionButton } from "@/schema/ActionButton";
 import { useProjectLabel } from "../project/names";
 import { ForkRunState, ParkedRunActions } from "../project/tabs/ForkTab";
 
 export function ForksPage() {
+  usePageTitle("Forks");
   const forks = useServiceState("forks")?.forks ?? [];
   const scheduler = useServiceState("scheduler");
   const nameOf = useProjectLabel();
@@ -24,7 +27,8 @@ export function ForksPage() {
   );
 
   return (
-    <div className="flex flex-col gap-8 px-5 py-4">
+    <div className="max-w-[100rem] flex flex-col gap-8 px-5 py-4">
+      <h1 className="sr-only">Forks</h1>
       {parked.length ? (
         <Section
           title="Waiting on you"
@@ -137,7 +141,7 @@ export function ForksPage() {
                             tone="warn"
                             title={fork.prediction.conflicted_files.join(", ")}
                           >
-                            {fork.prediction.conflicted_files.length} conflicts
+                            {plural(fork.prediction.conflicted_files.length, "conflict")}
                           </StatusMark>
                         )
                       ) : (

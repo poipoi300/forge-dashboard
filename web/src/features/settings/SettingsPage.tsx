@@ -9,6 +9,7 @@ import { ApiError, getConfig, putConfig } from "@/api/client";
 import { asSchema, type ServiceDescriptor, useDescriptors } from "@/api/descriptors";
 import { useAction } from "@/api/query";
 import { useAnyServiceState, useServiceState } from "@/api/stream";
+import { usePageTitle } from "@/app/title";
 import { RelativeTime } from "@/components/data";
 import { ErrorState, LoadingRows, QueryState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
@@ -230,6 +231,7 @@ function Gallery({ descriptor }: { descriptor: ServiceDescriptor }) {
 const SPECIAL = new Set(["gallery"]);
 
 export function SettingsPage() {
+  usePageTitle("Settings");
   const descriptors = useDescriptors();
   const configurable = useMemo(
     () =>
@@ -253,7 +255,8 @@ export function SettingsPage() {
 
   if (!descriptors) return <LoadingRows rows={8} className="p-5" />;
   return (
-    <div className="grid gap-6 px-5 py-4 md:grid-cols-[13rem_minmax(0,1fr)]">
+    <div className="max-w-[100rem] grid gap-6 px-5 py-4 md:grid-cols-[13rem_minmax(0,1fr)]">
+      <h1 className="sr-only">Settings</h1>
       <nav
         aria-label="Settings sections"
         className="flex flex-col gap-0.5 md:sticky md:top-14 md:self-start"

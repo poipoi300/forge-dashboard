@@ -32,6 +32,9 @@
   --board-ink: #f3f5f9;
   --board-ink-2: #a9b4ca;
   --board-rule: #2a3755;
+  /* Signal red as text on the board: #d40011 is 3.1:1 there, this is 5.9:1. */
+  --board-signal: #ff5c66;
+  --board-amber: #f5b82e;
 
   --signal: #d40011;
   --signal-ink: #b5000e;
@@ -39,6 +42,8 @@
   --amber: #f0a500;
   --amber-ink: #855700;
   --amber-wash: #fdf2d8;
+  /* Warning glyphs on white need 3:1; the amber fill is 2.1:1. */
+  --amber-glyph: #b07600;
   --clear: #0a8a43;
   --clear-ink: #06703a;
   --clear-wash: #e2f4ea;
@@ -87,6 +92,8 @@
   --board-ink: #eef1f7;
   --board-ink-2: #9aa6bd;
   --board-rule: #233050;
+  --board-signal: #ff6a71;
+  --board-amber: #f5c25a;
 
   --signal: #ff4a52;
   --signal-ink: #ff6a71;
@@ -94,6 +101,7 @@
   --amber: #f5b82e;
   --amber-ink: #f5c25a;
   --amber-wash: #33270d;
+  --amber-glyph: #f5b82e;
   --clear: #34c26f;
   --clear-ink: #4cd081;
   --clear-wash: #10291b;
@@ -109,18 +117,18 @@
   --font-sans: "Archivo Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "Cascadia Code", Consolas, monospace;
 
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 1rem;
-  --text-xs: 0.75rem;
-  --text-xs--line-height: 1.05rem;
-  --text-sm: 0.8125rem;
-  --text-sm--line-height: 1.2rem;
-  --text-base: 0.875rem;
-  --text-base--line-height: 1.3rem;
-  --text-lg: 1rem;
-  --text-lg--line-height: 1.4rem;
-  --text-xl: 1.25rem;
-  --text-xl--line-height: 1.6rem;
+  --text-2xs: 0.71875rem;
+  --text-2xs--line-height: 1.05rem;
+  --text-xs: 0.78125rem;
+  --text-xs--line-height: 1.15rem;
+  --text-sm: 0.84375rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.90625rem;
+  --text-base--line-height: 1.35rem;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.45rem;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.7rem;
 
   --color-paper: var(--paper);
   --color-surface: var(--surface);
@@ -138,6 +146,9 @@
   --color-board-ink: var(--board-ink);
   --color-board-ink-2: var(--board-ink-2);
   --color-board-rule: var(--board-rule);
+  --color-board-signal: var(--board-signal);
+  --color-board-amber: var(--board-amber);
+  --color-amber-glyph: var(--amber-glyph);
   --color-signal: var(--signal);
   --color-signal-ink: var(--signal-ink);
   --color-signal-wash: var(--signal-wash);
@@ -216,6 +227,13 @@
   }
 }
 
+/* Wide desktops (2560 and up) sit farther away: everything grows by an eighth. */
+@media (min-width: 2200px) {
+  html {
+    font-size: 18px;
+  }
+}
+
 @layer utilities {
   /* Times, counts, and columns: condensed and tabular, the departure board's numerals. */
   .figures {
@@ -244,22 +262,23 @@
 .prose-board > * + * {
   margin-top: 0.6em;
 }
-.prose-board :where(h1, h2, h3, h4) {
+/* Markdown headings arrive two levels down (h1 renders as h3): see components/Markdown.tsx. */
+.prose-board :where(h3, h4, h5, h6) {
   font-weight: 600;
   letter-spacing: -0.005em;
   line-height: 1.3;
   margin-top: 1.1em;
 }
-.prose-board > :where(h1, h2, h3, h4):first-child {
+.prose-board > :where(h3, h4, h5, h6):first-child {
   margin-top: 0;
 }
-.prose-board h1 {
+.prose-board h3 {
   font-size: var(--text-lg);
 }
-.prose-board h2 {
+.prose-board h4 {
   font-size: var(--text-base);
 }
-.prose-board :where(h3, h4) {
+.prose-board :where(h5, h6) {
   font-size: var(--text-sm);
 }
 .prose-board :where(ul, ol) {
@@ -349,13 +368,24 @@
   font-size: var(--text-2xs);
 }
 
+/*
+ * Reduced motion keeps state feedback and drops movement: colour, border,
+ * and opacity still fade, nothing slides, scales, or rotates on its own,
+ * and the one spinner left turns slowly because it is the only sign of work.
+ * Unlayered, so it outranks Tailwind's layered utilities without !important.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    /* biome-ignore lint/complexity/noImportantStyles: reduced motion has to beat every component's own transition */
-    animation-duration: 0.01ms !important;
-    /* biome-ignore lint/complexity/noImportantStyles: reduced motion has to beat every component's own transition */
-    transition-duration: 0.01ms !important;
+    transition-property: color, background-color, border-color, outline-color, opacity;
+    scroll-behavior: auto;
+  }
+  [data-state="open"],
+  [data-state="closed"] {
+    animation-name: none;
+  }
+  .animate-spin {
+    animation-duration: 2.4s;
   }
 }

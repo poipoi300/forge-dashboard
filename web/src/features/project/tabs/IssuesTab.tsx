@@ -205,7 +205,7 @@ export function IssuesTab({ project }: TabProps) {
       milestone: milestone || null,
       limit: 50,
     },
-    { follow: ["github"] },
+    { follow: ["github"], enabled: project.issues?.github === "ok" },
   );
 
   if (project.issues?.github !== "ok") {

@@ -83,55 +83,63 @@ export function StandardsTab({ project }: TabProps) {
               </span>
             </div>
             <ul className="flex flex-col divide-y divide-rule rounded-md border border-rule bg-surface">
-              {report.checks.map((check) => {
-                const expandable = Boolean(check.detail || check.diff);
-                return (
-                  <li key={check.id}>
-                    <button
-                      type="button"
-                      disabled={!expandable}
-                      aria-expanded={open === check.id}
-                      onClick={() => setOpen(open === check.id ? null : check.id)}
-                      className="grid w-full grid-cols-[1rem_4.5rem_minmax(0,1fr)_auto] items-center gap-2 px-2.5 py-1.5 text-left enabled:hover:bg-hover"
-                    >
-                      <ChevronRight
-                        aria-hidden
-                        className={cn(
-                          "size-3.5 text-ink-3",
-                          !expandable && "invisible",
-                          open === check.id && "rotate-90",
-                        )}
-                      />
-                      <StatusMark
-                        tone={
-                          check.result === "pass"
-                            ? "good"
-                            : check.result === "fail"
-                              ? "bad"
-                              : "neutral"
-                        }
-                        strong={check.result === "fail"}
+              {[...report.checks]
+                .sort((a, b) => Number(b.result === "fail") - Number(a.result === "fail"))
+                .map((check) => {
+                  const expandable = Boolean(check.detail || check.diff);
+                  return (
+                    <li key={check.id}>
+                      <button
+                        type="button"
+                        disabled={!expandable}
+                        aria-expanded={open === check.id}
+                        onClick={() => setOpen(open === check.id ? null : check.id)}
+                        className="grid w-full grid-cols-[1rem_4.5rem_minmax(0,1fr)_auto] items-center gap-2 px-2.5 py-1.5 text-left enabled:hover:bg-hover"
                       >
-                        {check.result}
-                      </StatusMark>
-                      <span className="truncate text-sm">{check.title}</span>
-                      <Chip title="How bring-up fixes it">
-                        {check.fix === "deterministic" ? "auto fix" : "agent fix"}
-                      </Chip>
-                    </button>
-                    {open === check.id ? (
-                      <div className="flex flex-col gap-2 border-t border-rule bg-surface-sunk px-3 py-2">
-                        {check.detail ? <p className="text-xs text-ink-2">{check.detail}</p> : null}
-                        {check.diff ? (
-                          <pre className="max-h-80 overflow-auto rounded-sm border border-rule bg-surface px-3 py-2 font-mono text-2xs">
-                            {check.diff}
-                          </pre>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </li>
-                );
-              })}
+                        <ChevronRight
+                          aria-hidden
+                          className={cn(
+                            "size-3.5 text-ink-3",
+                            !expandable && "invisible",
+                            open === check.id && "rotate-90",
+                          )}
+                        />
+                        <StatusMark
+                          tone={
+                            check.result === "pass"
+                              ? "good"
+                              : check.result === "fail"
+                                ? "bad"
+                                : "neutral"
+                          }
+                          strong={check.result === "fail"}
+                        >
+                          {check.result}
+                        </StatusMark>
+                        <span className="truncate text-sm">{check.title}</span>
+                        {check.result === "fail" ? (
+                          <Chip title="How bring-up fixes it">
+                            {check.fix === "deterministic" ? "auto fix" : "agent fix"}
+                          </Chip>
+                        ) : (
+                          <span />
+                        )}
+                      </button>
+                      {open === check.id ? (
+                        <div className="flex flex-col gap-2 border-t border-rule bg-surface-sunk px-3 py-2">
+                          {check.detail ? (
+                            <p className="text-xs text-ink-2">{check.detail}</p>
+                          ) : null}
+                          {check.diff ? (
+                            <pre className="max-h-80 overflow-auto rounded-sm border border-rule bg-surface px-3 py-2 font-mono text-2xs">
+                              {check.diff}
+                            </pre>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
             </ul>
           </div>
         ) : (

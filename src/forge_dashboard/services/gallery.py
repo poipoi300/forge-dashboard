@@ -119,6 +119,12 @@ class GalleryState(BaseModel):
     commit: str = Field("1a2b3c4", json_schema_extra=ui(format="code"))
     link: str = Field("https://example.com", json_schema_extra=ui(format="url"))
     location: str = Field("C:/projects/demo", json_schema_extra=ui(format="path"))
+    notes: str = Field(
+        "**Markdown** with a [link](https://example.com) and `code`.", json_schema_extra=ui(format="markdown")
+    )
+    marker: Literal["active", "blocked"] = Field(
+        "active", json_schema_extra=ui(format="chip", tones={"active": "good", "blocked": "bad"})
+    )
     pings: int = 0
 
 

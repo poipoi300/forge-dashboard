@@ -40,3 +40,8 @@ export function homeRelative(path: string): string {
   const match = /^([A-Za-z]:)?\/Users\/[^/]+/.exec(normalized) ?? /^\/home\/[^/]+/.exec(normalized);
   return match ? `~${normalized.slice(match[0].length)}` : normalized;
 }
+
+/** "1 file", "3 files": the count and the noun in agreement. */
+export function plural(value: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count(value)} ${value === 1 ? singular : pluralForm}`;
+}

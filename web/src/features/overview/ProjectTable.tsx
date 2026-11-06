@@ -94,13 +94,17 @@ export function ProjectTable({
                     >
                       {project.name}
                     </Link>
+                    <code className="shrink-0 font-mono text-2xs text-ink-3">{project.id}</code>
                   </div>
                   {project.summary ? (
                     <p className="truncate text-2xs text-ink-3 compact:hidden">{project.summary}</p>
                   ) : null}
                 </td>
                 {chosen.map((field) => (
-                  <td key={field.name} className="max-w-[18rem] px-2 py-1.5 compact:py-1">
+                  <td
+                    key={field.name}
+                    className="max-w-[20rem] px-2 py-1.5 whitespace-nowrap compact:py-1"
+                  >
                     <SchemaView
                       schema={field.schema}
                       root={layout.root}

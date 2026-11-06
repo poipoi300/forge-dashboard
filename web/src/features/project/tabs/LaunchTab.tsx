@@ -77,71 +77,42 @@ export function LaunchTab({ project, detail }: TabProps) {
     logFor ?? services.find((service) => ACTIVE.has(service.state))?.service_id ?? null;
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-      <Section
-        title="How to run it"
-        actions={
-          primary ? (
-            primary.url && (primary.state === "running" || primary.state === "external") ? (
-              <Button asChild size="sm">
-                <a href={primary.url} target="_blank" rel="noreferrer">
-                  <ExternalLink />
-                  Open {primary.label}
-                </a>
-              </Button>
-            ) : (
-              <ActionButton
-                service="services"
-                action="launch"
-                context={context}
-                variant="default"
-                icon={<Play />}
-                label={`Launch ${primary.label}`}
-                title="Start its dependencies, wait until it is ready, then open it"
-              />
-            )
-          ) : null
-        }
-      >
-        <QueryState query={guide}>
-          {(data) =>
-            data.markdown ? (
-              <div className="flex flex-col gap-2">
-                <InfoNote>
-                  {data.source === "readme"
-                    ? "From the README"
-                    : data.source === "manifest-file"
-                      ? "From the manifest's guide file"
-                      : "From the manifest"}
-                </InfoNote>
-                <div className="rounded-md border border-rule bg-surface px-4 py-3">
-                  <Markdown>{data.markdown}</Markdown>
-                </div>
-              </div>
-            ) : (
-              <EmptyState title="No launch instructions">
-                {data.problem ? `${data.problem}. ` : ""}Add{" "}
-                <code className="font-mono text-xs">[launch].instructions</code> to
-                forge.project.toml, or a Setup or Run section to the README.
-              </EmptyState>
-            )
-          }
-        </QueryState>
-      </Section>
-
+    <div className="flex flex-col gap-6">
       <div className="flex min-w-0 flex-col gap-6">
         <Section
           title="Services"
           description={services.length ? "Ports are the ones actually bound." : undefined}
           actions={
             services.length ? (
-              <ActionButton
-                service="services"
-                action="scan-external"
-                label="Find running instances"
-                size="xs"
-                variant="ghost"
-              />
+              <>
+                <ActionButton
+                  service="services"
+                  action="scan-external"
+                  label="Find running instances"
+                  size="xs"
+                  variant="ghost"
+                />
+                {primary ? (
+                  primary.url && (primary.state === "running" || primary.state === "external") ? (
+                    <Button asChild size="sm">
+                      <a href={primary.url} target="_blank" rel="noreferrer">
+                        <ExternalLink />
+                        Open {primary.label}
+                      </a>
+                    </Button>
+                  ) : (
+                    <ActionButton
+                      service="services"
+                      action="launch"
+                      context={context}
+                      variant="default"
+                      icon={<Play />}
+                      label={`Launch ${primary.label}`}
+                      title="Start its dependencies, wait until it is ready, then open it"
+                    />
+                  )
+                ) : null}
+              </>
             ) : null
           }
         >
@@ -360,6 +331,38 @@ export function LaunchTab({ project, detail }: TabProps) {
             </table>
           </Section>
         ) : null}
+        {/* State first, prose second: the instructions stay one click away once services exist. */}
+        <details open={!services.length} className="group/guide">
+          <summary className="flex cursor-pointer items-center gap-2 border-b border-rule-strong pb-1.5 text-sm font-semibold tracking-tight text-ink">
+            How to run it
+          </summary>
+          <div className="pt-3">
+            <QueryState query={guide}>
+              {(data) =>
+                data.markdown ? (
+                  <div className="flex flex-col gap-2">
+                    <InfoNote>
+                      {data.source === "readme"
+                        ? "From the README"
+                        : data.source === "manifest-file"
+                          ? "From the manifest's guide file"
+                          : "From the manifest"}
+                    </InfoNote>
+                    <div className="rounded-md border border-rule bg-surface px-4 py-3">
+                      <Markdown>{data.markdown}</Markdown>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState title="No launch instructions">
+                    {data.problem ? `${data.problem}. ` : ""}Add{" "}
+                    <code className="font-mono text-xs">[launch].instructions</code> to
+                    forge.project.toml, or a Setup or Run section to the README.
+                  </EmptyState>
+                )
+              }
+            </QueryState>
+          </div>
+        </details>
       </div>
     </div>
   );

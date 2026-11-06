@@ -137,7 +137,7 @@ export function Section({
         <div className="flex min-w-0 flex-col">
           <h2
             id={id ? `${id}-title` : undefined}
-            className="text-sm font-semibold tracking-tight text-ink"
+            className="text-base font-semibold tracking-tight text-ink"
           >
             {title}
           </h2>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useAction } from "@/api/query";
 import { useServiceState } from "@/api/stream";
+import { usePageTitle } from "@/app/title";
 import { PathText, RelativeTime } from "@/components/data";
 import { EmptyState, QueryState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
@@ -63,11 +64,13 @@ function StepOutput({ step }: { step: StepRef }) {
 }
 
 export function RunsPage() {
+  usePageTitle("Forge runs");
   const state = useServiceState("forge_runs");
   const [selected, setSelected] = useState<StepRef | null>(null);
   const runs = state?.runs ?? [];
   return (
-    <div className="grid gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+    <div className="max-w-[100rem] grid gap-6 px-5 py-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <h1 className="sr-only">Forge runs</h1>
       <Section
         title="Forge runs"
         description={

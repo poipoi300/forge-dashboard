@@ -3,6 +3,7 @@ import { CheckCheck } from "lucide-react";
 import { Link } from "wouter";
 import { useAction } from "@/api/query";
 import { useServiceState } from "@/api/stream";
+import { usePageTitle } from "@/app/title";
 import { RelativeTime } from "@/components/data";
 import { QueryState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
@@ -104,8 +105,10 @@ function Notifications() {
 }
 
 export function ActivityPage() {
+  usePageTitle("Activity");
   return (
-    <div className="grid gap-8 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+    <div className="max-w-[100rem] grid gap-8 px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+      <h1 className="sr-only">Activity</h1>
       <Notifications />
       <Section title="Everything, as it happened">
         <ActivityFeed projectId={null} showProject />

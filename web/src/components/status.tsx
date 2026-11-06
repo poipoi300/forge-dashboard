@@ -34,7 +34,7 @@ export const TONE_TEXT: Record<Tone, string> = {
 
 const TONE_ICON_COLOR: Record<Tone, string> = {
   good: "text-clear",
-  warn: "text-amber",
+  warn: "text-amber-glyph",
   bad: "text-signal",
   info: "text-info",
   neutral: "text-idle",

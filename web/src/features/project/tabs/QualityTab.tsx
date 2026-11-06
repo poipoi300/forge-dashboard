@@ -43,7 +43,17 @@ export function Outcome({ value }: { value: string }) {
   );
 }
 
-function CheckDetail({ projectId, checkId }: { projectId: string; checkId: string }) {
+const GATES_SHOWN = 6;
+
+function CheckDetail({
+  projectId,
+  checkId,
+  label,
+}: {
+  projectId: string;
+  checkId: string;
+  label: string;
+}) {
   const history = useAction(
     "/api/services/checks/actions/history",
     { project_id: projectId, check_id: checkId, limit: 100 },
@@ -56,7 +66,11 @@ function CheckDetail({ projectId, checkId }: { projectId: string; checkId: strin
   );
   const [open, setOpen] = useState<string | null>(null);
   return (
-    <div className="grid gap-4 rounded-md border border-rule bg-surface p-3 lg:grid-cols-2">
+    <section
+      aria-label={`History of ${label}`}
+      className="grid gap-4 rounded-md border border-rule bg-surface p-3 lg:grid-cols-2"
+    >
+      <h3 className="text-xs font-medium text-ink-2 lg:col-span-2">History of {label}</h3>
       <QueryState query={history}>
         {(data) =>
           data.points.length === 0 ? (
@@ -162,7 +176,7 @@ function CheckDetail({ projectId, checkId }: { projectId: string; checkId: strin
           </div>
         )}
       </QueryState>
-    </div>
+    </section>
   );
 }
 
@@ -322,6 +336,7 @@ export function QualityTab({ project }: TabProps) {
   const checksState = useServiceState("checks");
   const entry = checksState?.projects.find((item) => item.project_id === project.id);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showAllGates, setShowAllGates] = useState(false);
   const context = { projectId: project.id };
   const current =
     selected ??
@@ -425,7 +440,12 @@ export function QualityTab({ project }: TabProps) {
               </tbody>
             </table>
             {current ? (
-              <CheckDetail key={current} projectId={project.id} checkId={current} />
+              <CheckDetail
+                key={current}
+                projectId={project.id}
+                checkId={current}
+                label={entry.checks.find((check) => check.check_id === current)?.label ?? current}
+              />
             ) : null}
           </>
         ) : (
@@ -465,7 +485,7 @@ export function QualityTab({ project }: TabProps) {
         >
           {entry?.gates.length ? (
             <ul className="flex flex-col divide-y divide-rule">
-              {entry.gates.map((gate) => (
+              {(showAllGates ? entry.gates : entry.gates.slice(0, GATES_SHOWN)).map((gate) => (
                 <li key={gate.id} className="flex items-center justify-between gap-2 py-1">
                   <span className="min-w-0">
                     <code className="font-mono text-xs">{gate.id}</code>
@@ -489,10 +509,24 @@ export function QualityTab({ project }: TabProps) {
                   </span>
                 </li>
               ))}
+              {entry.gates.length > GATES_SHOWN ? (
+                <li className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAllGates(!showAllGates)}
+                    aria-expanded={showAllGates}
+                    className="py-1 text-xs text-info-ink hover:underline"
+                  >
+                    {showAllGates ? "Show fewer" : `Show all ${entry.gates.length} gates`}
+                  </button>
+                </li>
+              ) : null}
             </ul>
           ) : (
-            <EmptyState title="No pre-commit gates">
-              This repository has no .pre-commit-config.yaml.
+            <EmptyState
+              title={entry?.gates_error ? "The gates could not be read" : "No pre-commit gates"}
+            >
+              {entry?.gates_error ?? "This repository has no .pre-commit-config.yaml."}
             </EmptyState>
           )}
         </Section>

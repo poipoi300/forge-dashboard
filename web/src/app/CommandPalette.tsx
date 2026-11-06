@@ -107,6 +107,7 @@ export function CommandPalette() {
               >
                 <FolderGit2 />
                 {project.name}
+                <code className="font-mono text-2xs text-ink-3">{project.id}</code>
               </CommandItem>
             ))}
           </CommandGroup>
@@ -124,6 +125,7 @@ export function CommandPalette() {
                 >
                   <FolderGit2 />
                   <span className="truncate">{project.name}</span>
+                  <code className="shrink-0 font-mono text-2xs text-ink-3">{project.id}</code>
                   <span className="truncate text-xs text-ink-3">{project.summary}</span>
                 </CommandItem>
               ))}

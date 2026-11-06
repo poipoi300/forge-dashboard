@@ -24,13 +24,14 @@ function niceStep(span: number, ticks: number): number {
   return nice * magnitude;
 }
 
-export function niceTicks(min: number, max: number, count = 4): number[] {
+/** Round axis ticks spanning [min, max]; counts (`integer`) never get fractional steps. */
+export function niceTicks(min: number, max: number, count = 4, integer = false): number[] {
   if (min === max) {
     // A flat series gets a band around its value; a non-negative one never dips below zero.
     const pad = Math.abs(min) || 1;
-    return niceTicks(min >= 0 ? Math.max(0, min - pad) : min - pad, max + pad, count);
+    return niceTicks(min >= 0 ? Math.max(0, min - pad) : min - pad, max + pad, count, integer);
   }
-  const step = niceStep(max - min, count);
+  const step = integer ? Math.max(1, niceStep(max - min, count)) : niceStep(max - min, count);
   const start = Math.floor(min / step) * step;
   const ticks: number[] = [];
   for (let tick = start; tick <= max + step * 0.5; tick += step)
@@ -81,6 +82,8 @@ export function TrendChart({
     const ticks = niceTicks(
       zeroBased ? Math.min(0, ...values) : Math.min(...values),
       Math.max(...values),
+      4,
+      values.every(Number.isInteger),
     );
     const low = ticks[0] ?? 0;
     const high = ticks[ticks.length - 1] ?? 1;

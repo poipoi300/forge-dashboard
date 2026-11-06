@@ -158,7 +158,7 @@ export function GitTab({ project }: TabProps) {
             service="git"
             action="push"
             context={context}
-            input={{ remote: null, branch: null }}
+            input={{ branch: null }}
             prompt
             size="xs"
             icon={<Upload />}

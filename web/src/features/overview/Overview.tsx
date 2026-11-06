@@ -17,6 +17,7 @@ import { useLocation, useSearch } from "wouter";
 import { getConfig } from "@/api/client";
 import { useServiceState } from "@/api/stream";
 import { usePreferences } from "@/app/preferences";
+import { usePageTitle } from "@/app/title";
 import { EmptyState, LoadingRows } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -304,6 +305,7 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 export function Overview() {
+  usePageTitle("Overview");
   const projectsState = useServiceState("projects");
   const discovery = useServiceState("discovery");
   const layout = useSummarySchema();
@@ -393,6 +395,7 @@ export function Overview() {
 
   return (
     <div className="flex flex-col gap-3 px-5 py-4">
+      <h1 className="sr-only">Overview</h1>
       <div className="flex flex-wrap items-center gap-2">
         <label className="relative flex min-w-56 flex-1 items-center sm:max-w-sm">
           <Search aria-hidden className="pointer-events-none absolute left-2 size-3.5 text-ink-3" />
@@ -550,7 +553,7 @@ export function Overview() {
         >
           {discovery?.scan.running
             ? `Scanned ${discovery.scan.directories} folders so far${discovery.scan.current ? `, now in ${discovery.scan.current}` : ""}.`
-            : `The scan covers ${rootList.join(", ") || "no folders"}. A project is a folder with forge.project.toml, AGENTS.md, or a git repo with a package file. Change the folders in Settings.`}
+            : `The scan covers ${rootList.join(", ") || "no folders"}. A project is a folder with a forge.project.toml, forge itself, or a repo whose AGENTS.md and gates come from forge. Add one by hand, or change the folders in Settings.`}
         </EmptyState>
       ) : !ordered.length ? (
         <EmptyState
@@ -588,7 +591,7 @@ export function Overview() {
                   <span className="figures font-normal text-ink-3">{group.projects.length}</span>
                 </h2>
               ) : null}
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(21rem,1fr))] gap-3 compact:grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] compact:gap-2">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(21rem,1fr))] items-start gap-3 compact:grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] compact:gap-2">
                 {group.projects.map((project) => (
                   <ProjectCard
                     key={project.id}
