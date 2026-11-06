@@ -163,7 +163,7 @@ function Rail({ onNavigate }: { onNavigate?: () => void }) {
           <span className="flex-1">Notifications</span>
           {unread ? (
             <span
-              className="figures text-xs font-semibold text-board-signal"
+              className="figures text-xs font-semibold text-board-amber"
               title={`${unread} unread`}
             >
               {unread}
