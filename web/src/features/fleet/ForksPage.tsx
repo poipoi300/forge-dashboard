@@ -5,14 +5,14 @@ import { GitMerge, Pause, Play } from "lucide-react";
 import { Link } from "wouter";
 import { useServiceState } from "@/api/stream";
 import { usePageTitle } from "@/app/title";
-import { RelativeTime } from "@/components/data";
+import { compactPath, RelativeTime } from "@/components/data";
 import { EmptyState, Section } from "@/components/states";
 import { StatusMark } from "@/components/status";
 import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ActionButton } from "@/schema/ActionButton";
 import { useProjectLabel } from "../project/names";
-import { ForkRunState, ParkedRunActions } from "../project/tabs/ForkTab";
+import { ForkRunState, ParkedRunActions, runDetail } from "../project/tabs/ForkTab";
 
 export function ForksPage() {
   usePageTitle("Forks");
@@ -49,7 +49,7 @@ export function ForksPage() {
                       {nameOf(fork.project_id)}
                     </Link>
                     <ForkRunState state={fork.last_run.state} />
-                    <span className="truncate text-xs text-ink-2">{fork.last_run.detail}</span>
+                    <span className="truncate text-xs text-ink-2">{runDetail(fork.last_run)}</span>
                   </span>
                   <ParkedRunActions run={fork.last_run} projectId={fork.project_id} />
                 </li>
@@ -120,7 +120,11 @@ export function ForksPage() {
                       className="max-w-[16rem] truncate px-2 py-1.5 font-mono text-2xs"
                       title={fork.upstream_url ?? ""}
                     >
-                      {fork.upstream_url?.replace(/^https?:\/\/(www\.)?github\.com\//, "") ?? "—"}
+                      {fork.upstream_url
+                        ? compactPath(
+                            fork.upstream_url.replace(/^https?:\/\/(www\.)?github\.com\//, ""),
+                          )
+                        : "—"}
                       {fork.upstream_branch ? `@${fork.upstream_branch}` : ""}
                     </td>
                     <td

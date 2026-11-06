@@ -11779,7 +11779,7 @@
               "format": "badge",
               "short_label": "last sync",
               "tones": {
-                "conflict": "bad",
+                "conflict": "warn",
                 "failed": "bad",
                 "needs-attention": "warn",
                 "never": "neutral",

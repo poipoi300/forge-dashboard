@@ -261,7 +261,7 @@ class ForkFacts(BaseModel):
             format="badge",
             tones={
                 "synced": "good",
-                "conflict": "bad",
+                "conflict": "warn",
                 "needs-attention": "warn",
                 "ready-to-apply": "info",
                 "failed": "bad",
@@ -621,7 +621,7 @@ def attention_items(facts: ProjectFacts, health: Health) -> list[AttentionItem]:
         if reason.level is HealthLevel.FAILING
     ]
     if facts.fork is not None and facts.fork.last_sync in ("conflict", "needs-attention", "ready-to-apply", "failed"):
-        level: Literal["warn", "bad"] = "bad" if facts.fork.last_sync in ("conflict", "failed") else "warn"
+        level: Literal["warn", "bad"] = "bad" if facts.fork.last_sync == "failed" else "warn"
         items.append(AttentionItem(source="fork", level=level, message=f"fork sync {facts.fork.last_sync}"))
     if facts.user.status is Lifecycle.BLOCKED:
         items.append(AttentionItem(source="status", level="warn", message=facts.user.status_note or "marked blocked"))

@@ -7,7 +7,7 @@ import type { Schemas } from "@/api/client";
 import { useAction } from "@/api/query";
 import { useServiceState } from "@/api/stream";
 import { DiffView } from "@/components/DiffView";
-import { RelativeTime } from "@/components/data";
+import { compactPath, RelativeTime } from "@/components/data";
 import { EmptyState, QueryState, Section } from "@/components/states";
 import { InfoNote, StatusMark } from "@/components/status";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -24,13 +24,21 @@ export const FORK_RUN_TONE: Record<string, Tone> = {
   running: "info",
   synced: "good",
   "up-to-date": "good",
-  conflict: "bad",
+  conflict: "warn",
   "needs-attention": "warn",
   "ready-to-apply": "info",
   failed: "bad",
   aborted: "neutral",
 };
 const PARKED = new Set(["conflict", "needs-attention", "ready-to-apply"]);
+
+/** A run's one-line detail; a conflict is counted here, so the wording never depends on stored text. */
+export function runDetail(run: ForkRun): string | null {
+  if (run.state === "conflict" && run.conflicted_files.length) {
+    return plural(run.conflicted_files.length, "conflicted file");
+  }
+  return run.detail ?? null;
+}
 
 export function ForkRunState({ state }: { state: string }) {
   const tone = FORK_RUN_TONE[state] ?? "neutral";
@@ -145,7 +153,7 @@ function RunRow({
           {run.pushed ? " · pushed" : ""}
         </span>
       </button>
-      {run.detail ? <p className="text-xs text-ink-2">{run.detail}</p> : null}
+      {runDetail(run) ? <p className="text-xs text-ink-2">{runDetail(run)}</p> : null}
       {run.conflicted_files.length ? (
         <p className="text-2xs text-ink-3">
           conflicts in <span className="font-mono">{run.conflicted_files.join(", ")}</span>
@@ -207,7 +215,10 @@ export function ForkTab({ project }: TabProps) {
       <div className="grid gap-3 rounded-md border border-rule bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex flex-col gap-1">
           <p className="text-sm">
-            upstream <code className="font-mono text-xs">{status.upstream_url ?? "not set"}</code>
+            upstream{" "}
+            <code className="font-mono text-xs" title={status.upstream_url ?? undefined}>
+              {status.upstream_url ? compactPath(status.upstream_url) : "not set"}
+            </code>
             {status.upstream_branch ? (
               <>
                 {" "}

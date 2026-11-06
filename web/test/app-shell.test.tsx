@@ -320,11 +320,12 @@ describe("the departures board", () => {
       ]),
     });
     const sync = board().getByRole("link", { name: /Sync alpha/ });
-    expect(sync.textContent).toContain("in 10 min");
+    // Departures read as timetable times, the scheduled HH:MM.
+    expect(sync.textContent).toContain(clockTime((NOW_SECONDS + 600) * 1000));
     expect(sync.textContent).toContain("alpha");
     expect(sync.getAttribute("href")).toBe("/p/alpha");
     const nightly = board().getByRole("link", { name: /Nightly checks/ });
-    expect(nightly.textContent).toContain("in 2 h");
+    expect(nightly.textContent).toContain(clockTime((NOW_SECONDS + 7200) * 1000));
     expect(nightly.getAttribute("href")).toBe("/jobs");
     expect(board().getByRole("link", { name: /Manual only/ }).textContent).toContain("manual");
     expect(board().queryByText(/Beyond the board/)).toBeNull();
@@ -480,7 +481,7 @@ describe("the compact departures strip on other pages", () => {
     expect(screen.queryByRole("region", { name: "Departures" })).toBeNull();
     const strip = screen.getByText(clockTime(NOW_MS)).parentElement as HTMLElement;
     expect(strip.textContent).toBe(
-      `${clockTime(NOW_MS)}7 projects2 failing1 runningnext in 30 min Nightly checks`,
+      `${clockTime(NOW_MS)}7 projects2 failing1 runningnext ${clockTime((NOW_SECONDS + 1800) * 1000)} Nightly checks`,
     );
   });
 
@@ -502,5 +503,26 @@ describe("the compact departures strip on other pages", () => {
       ]),
     });
     expect(screen.getByText(/On demand/)).toBeTruthy();
+  });
+});
+
+describe("late departures on the board", () => {
+  test("an overdue scheduled run shows its time with the minutes it is late", () => {
+    mockApi();
+    renderApp("/");
+    seedStream({
+      scheduler: makeSchedulerState([
+        makeScheduleEntry("late", {
+          title: "Sync alpha",
+          project_id: "alpha",
+          next_run_at: NOW_SECONDS - 4 * 60,
+        }),
+      ]),
+    });
+    const row = within(screen.getByRole("region", { name: "Departures" })).getByRole("link", {
+      name: /Sync alpha/,
+    });
+    expect(row.textContent).toContain(clockTime((NOW_SECONDS - 240) * 1000));
+    expect(row.textContent).toContain("+4");
   });
 });

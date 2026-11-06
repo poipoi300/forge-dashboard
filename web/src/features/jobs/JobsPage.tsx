@@ -32,7 +32,7 @@ function JobRow({ job, selected }: { job: Job; selected?: boolean }) {
         href={`/jobs/${job.id}`}
         aria-current={selected ? "true" : undefined}
         className={cn(
-          "grid grid-cols-[minmax(0,1fr)_7rem_5rem_6rem] items-center gap-3 px-3 py-1.5 hover:bg-hover",
+          "grid grid-cols-1 items-center gap-x-3 gap-y-0.5 px-3 py-1.5 hover:bg-hover sm:grid-cols-[minmax(0,1fr)_7rem_5rem_6rem]",
           selected && "bg-select",
         )}
       >
@@ -45,12 +45,15 @@ function JobRow({ job, selected }: { job: Job; selected?: boolean }) {
               : (job.progress_label ?? job.summary ?? job.error ?? job.kind)}
           </span>
         </span>
-        <JobStatusMark status={job.status} />
-        <span className="text-right text-xs">
-          <Elapsed job={job} />
-        </span>
-        <span className="text-right text-2xs text-ink-3">
-          <RelativeTime at={job.created_at} />
+        {/* One line under the title on a phone; three grid cells from sm up. */}
+        <span className="flex items-center gap-3 sm:contents">
+          <JobStatusMark status={job.status} />
+          <span className="text-xs sm:text-right">
+            <Elapsed job={job} />
+          </span>
+          <span className="text-2xs text-ink-3 sm:text-right">
+            <RelativeTime at={job.created_at} />
+          </span>
         </span>
       </Link>
       {job.status === "running" && job.progress !== null ? (
@@ -141,7 +144,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           lines={log.lines}
           label="Job log"
           live={job?.status === "running"}
-          className="h-[min(36rem,60vh)]"
+          className="max-h-[min(36rem,60vh)] min-h-32"
         />
       )}
       {detail.data?.result ? (

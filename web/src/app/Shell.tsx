@@ -75,7 +75,7 @@ function NavLink({
           title={`${item.count} ${item.countLabel ?? ""}`.trim()}
           className={cn(
             "figures text-xs",
-            item.alert ? "font-semibold text-board-signal" : "text-board-ink-2",
+            item.alert ? "font-semibold text-board-amber" : "text-board-ink-2",
           )}
         >
           {item.count}

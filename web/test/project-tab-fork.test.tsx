@@ -423,7 +423,7 @@ describe("ForkTab runs", () => {
     ["running", "info"],
     ["synced", "good"],
     ["up-to-date", "good"],
-    ["conflict", "bad"],
+    ["conflict", "warn"],
     ["needs-attention", "warn"],
     ["ready-to-apply", "info"],
     ["failed", "bad"],

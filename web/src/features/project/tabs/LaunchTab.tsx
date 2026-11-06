@@ -1,6 +1,6 @@
 // Launch and interface: how to run it, one button that does, the supervised
 // services with their actual addresses and logs, and the deployments.
-import { ExternalLink, Play, RotateCw, Square } from "lucide-react";
+import { ChevronRight, ExternalLink, Play, RotateCw, Square } from "lucide-react";
 import { useState } from "react";
 import { useServiceLog } from "@/api/logs";
 import { useAction } from "@/api/query";
@@ -57,6 +57,13 @@ function ServiceLog({
     />
   );
 }
+
+const GUIDE_SOURCE: Record<string, string> = {
+  readme: "from the README",
+  manifest: "from the manifest",
+  "manifest-file": "from the manifest's guide file",
+  none: "none written yet",
+};
 
 export function LaunchTab({ project, detail }: TabProps) {
   const guide = useAction(
@@ -333,8 +340,17 @@ export function LaunchTab({ project, detail }: TabProps) {
         ) : null}
         {/* State first, prose second: the instructions stay one click away once services exist. */}
         <details open={!services.length} className="group/guide">
-          <summary className="flex cursor-pointer items-center gap-2 border-b border-rule-strong pb-1.5 text-sm font-semibold tracking-tight text-ink">
+          <summary className="flex cursor-pointer list-none items-center gap-2 border-b border-rule-strong pb-1.5 text-base font-semibold tracking-tight text-ink [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              aria-hidden
+              className="size-4 text-ink-3 transition-transform group-open/guide:rotate-90"
+            />
             How to run it
+            {guide.data ? (
+              <span className="text-2xs font-normal text-ink-3">
+                {GUIDE_SOURCE[guide.data.source]}
+              </span>
+            ) : null}
           </summary>
           <div className="pt-3">
             <QueryState query={guide}>

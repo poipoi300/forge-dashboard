@@ -200,7 +200,7 @@ export function Departures({ compact = false }: { compact?: boolean }) {
           <span className="hidden min-w-0 truncate text-xs text-board-ink-2 md:inline">
             next{" "}
             <span className="figures font-semibold text-board-ink">
-              {next[0].next_run_at ? relative(next[0].next_run_at, now) : ""}
+              {next[0].next_run_at ? clockTime(next[0].next_run_at * 1000) : ""}
             </span>{" "}
             {next[0].title}
           </span>
@@ -240,7 +240,7 @@ export function Departures({ compact = false }: { compact?: boolean }) {
           next.map((entry) => (
             <BoardRow
               key={entry.id}
-              time={entry.next_run_at ? relative(entry.next_run_at, now) : "manual"}
+              time={entry.next_run_at ? clockTime(entry.next_run_at * 1000) : "manual"}
               title={entry.title}
               detail={entry.project_id}
               href={entry.project_id ? `/p/${entry.project_id}` : "/jobs"}
@@ -278,7 +278,7 @@ export function Departures({ compact = false }: { compact?: boolean }) {
           arrivals.map((job) => (
             <BoardRow
               key={job.id}
-              time={job.ended_at ? clockTime(job.ended_at * 1000).slice(0, 5) : ""}
+              time={job.ended_at ? clockTime(job.ended_at * 1000) : ""}
               title={job.title}
               detail={ARRIVED[job.status]}
               href={`/jobs/${job.id}`}

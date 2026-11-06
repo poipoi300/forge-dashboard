@@ -208,46 +208,48 @@ function CiRuns({ projectId }: { projectId: string }) {
         {(data) =>
           data.runs.length ? (
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-rule-strong text-left text-xs text-ink-3">
-                    <th className="px-2 py-1 font-medium">workflow</th>
-                    <th className="px-2 py-1 font-medium">outcome</th>
-                    <th className="px-2 py-1 font-medium">branch</th>
-                    <th className="px-2 py-1 text-right font-medium">took</th>
-                    <th className="px-2 py-1 text-right font-medium">when</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.runs.map((item) => (
-                    <tr
-                      key={item.id}
-                      onClick={() => setSelected(item.id)}
-                      className={cn(
-                        "cursor-pointer border-b border-rule last:border-b-0 hover:bg-hover",
-                        selected === item.id && "bg-select",
-                      )}
-                    >
-                      <td className="max-w-[14rem] px-2 py-1">
-                        <span className="block truncate">{item.workflow}</span>
-                        <span className="block truncate text-2xs text-ink-3">
-                          #{item.number} {item.title}
-                        </span>
-                      </td>
-                      <td className="px-2 py-1">
-                        <Outcome value={item.outcome} />
-                      </td>
-                      <td className="px-2 py-1 font-mono text-2xs">{item.branch}</td>
-                      <td className="figures px-2 py-1 text-right text-xs">
-                        {item.duration_s !== null ? duration(item.duration_s) : "—"}
-                      </td>
-                      <td className="px-2 py-1 text-right text-xs">
-                        <RelativeTime at={item.started_at} />
-                      </td>
+              <div className="min-w-0 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-rule-strong text-left text-xs text-ink-3">
+                      <th className="px-2 py-1 font-medium">workflow</th>
+                      <th className="px-2 py-1 font-medium">outcome</th>
+                      <th className="px-2 py-1 font-medium">branch</th>
+                      <th className="px-2 py-1 text-right font-medium">took</th>
+                      <th className="px-2 py-1 text-right font-medium">when</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.runs.map((item) => (
+                      <tr
+                        key={item.id}
+                        onClick={() => setSelected(item.id)}
+                        className={cn(
+                          "cursor-pointer border-b border-rule last:border-b-0 hover:bg-hover",
+                          selected === item.id && "bg-select",
+                        )}
+                      >
+                        <td className="max-w-[14rem] px-2 py-1">
+                          <span className="block truncate">{item.workflow}</span>
+                          <span className="block truncate text-2xs text-ink-3">
+                            #{item.number} {item.title}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1">
+                          <Outcome value={item.outcome} />
+                        </td>
+                        <td className="px-2 py-1 font-mono text-2xs">{item.branch}</td>
+                        <td className="figures px-2 py-1 text-right text-xs whitespace-nowrap">
+                          {item.duration_s !== null ? duration(item.duration_s) : "—"}
+                        </td>
+                        <td className="px-2 py-1 text-right text-xs">
+                          <RelativeTime at={item.started_at} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <div className="min-w-0">
                 {selected === null ? (
                   <p className="text-xs text-ink-3">Select a run for its jobs and steps.</p>
@@ -367,78 +369,81 @@ export function QualityTab({ project }: TabProps) {
       >
         {entry?.checks.length ? (
           <>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-rule-strong text-left text-xs text-ink-3">
-                  <th className="px-2 py-1 font-medium">check</th>
-                  <th className="px-2 py-1 font-medium">result</th>
-                  <th className="px-2 py-1 text-right font-medium">tests</th>
-                  <th className="px-2 py-1 text-right font-medium">took</th>
-                  <th className="px-2 py-1 font-medium">commit</th>
-                  <th className="px-2 py-1 text-right font-medium">ran</th>
-                  <th className="px-2 py-1">
-                    <span className="sr-only">run</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {entry.checks.map((check) => (
-                  <tr
-                    key={check.check_id}
-                    onClick={() => setSelected(check.check_id)}
-                    className={cn(
-                      "cursor-pointer border-b border-rule last:border-b-0 hover:bg-hover",
-                      current === check.check_id && "bg-select",
-                    )}
-                  >
-                    <td className="px-2 py-1.5">
-                      <span className="font-medium">{check.label}</span> <Chip>{check.stage}</Chip>
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <span className="flex items-center gap-2">
-                        <Outcome value={check.outcome} />
-                        {check.stale ? (
-                          <span
-                            className="text-2xs font-medium text-amber-ink"
-                            title="HEAD moved or the tree changed since this ran"
-                          >
-                            stale
-                          </span>
-                        ) : null}
-                      </span>
-                    </td>
-                    <td className="figures px-2 py-1.5 text-right text-xs">
-                      {check.tests !== null
-                        ? `${check.tests - (check.failures ?? 0) - (check.errors ?? 0)}/${check.tests}`
-                        : "—"}
-                    </td>
-                    <td className="figures px-2 py-1.5 text-right text-xs">
-                      {check.duration_s !== null ? duration(check.duration_s) : "—"}
-                    </td>
-                    <td className="px-2 py-1.5 font-mono text-2xs text-ink-2">
-                      {check.sha?.slice(0, 8) ?? "—"}
-                      {check.dirty ? <span className="text-amber-ink"> +edits</span> : null}
-                    </td>
-                    <td className="px-2 py-1.5 text-right text-xs">
-                      <RelativeTime at={check.ran_at} />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <ActionButton
-                        service="checks"
-                        action="run"
-                        context={context}
-                        input={{ check_id: check.check_id, on_head: null }}
-                        size="icon-xs"
-                        variant="ghost"
-                        icon={<Play />}
-                        label={<span className="sr-only">Run {check.label}</span>}
-                        title={`Run ${check.label}`}
-                      />
-                    </td>
+            <div className="min-w-0 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-rule-strong text-left text-xs text-ink-3">
+                    <th className="px-2 py-1 font-medium">check</th>
+                    <th className="px-2 py-1 font-medium">result</th>
+                    <th className="px-2 py-1 text-right font-medium">tests</th>
+                    <th className="px-2 py-1 text-right font-medium">took</th>
+                    <th className="px-2 py-1 font-medium">commit</th>
+                    <th className="px-2 py-1 text-right font-medium">ran</th>
+                    <th className="px-2 py-1">
+                      <span className="sr-only">run</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {entry.checks.map((check) => (
+                    <tr
+                      key={check.check_id}
+                      onClick={() => setSelected(check.check_id)}
+                      className={cn(
+                        "cursor-pointer border-b border-rule last:border-b-0 hover:bg-hover",
+                        current === check.check_id && "bg-select",
+                      )}
+                    >
+                      <td className="px-2 py-1.5">
+                        <span className="font-medium">{check.label}</span>{" "}
+                        <Chip>{check.stage}</Chip>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span className="flex items-center gap-2">
+                          <Outcome value={check.outcome} />
+                          {check.stale ? (
+                            <span
+                              className="text-2xs font-medium text-amber-ink"
+                              title="HEAD moved or the tree changed since this ran"
+                            >
+                              stale
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
+                      <td className="figures px-2 py-1.5 text-right text-xs whitespace-nowrap">
+                        {check.tests !== null
+                          ? `${check.tests - (check.failures ?? 0) - (check.errors ?? 0)}/${check.tests}`
+                          : "—"}
+                      </td>
+                      <td className="figures px-2 py-1.5 text-right text-xs whitespace-nowrap">
+                        {check.duration_s !== null ? duration(check.duration_s) : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 font-mono text-2xs text-ink-2">
+                        {check.sha?.slice(0, 8) ?? "—"}
+                        {check.dirty ? <span className="text-amber-ink"> +edits</span> : null}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-xs">
+                        <RelativeTime at={check.ran_at} />
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        <ActionButton
+                          service="checks"
+                          action="run"
+                          context={context}
+                          input={{ check_id: check.check_id, on_head: null }}
+                          size="icon-xs"
+                          variant="ghost"
+                          icon={<Play />}
+                          label={<span className="sr-only">Run {check.label}</span>}
+                          title={`Run ${check.label}`}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             {current ? (
               <CheckDetail
                 key={current}
@@ -486,9 +491,12 @@ export function QualityTab({ project }: TabProps) {
           {entry?.gates.length ? (
             <ul className="flex flex-col divide-y divide-rule">
               {(showAllGates ? entry.gates : entry.gates.slice(0, GATES_SHOWN)).map((gate) => (
-                <li key={gate.id} className="flex items-center justify-between gap-2 py-1">
+                <li
+                  key={gate.id}
+                  className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-1"
+                >
                   <span className="min-w-0">
-                    <code className="font-mono text-xs">{gate.id}</code>
+                    <code className="font-mono text-xs whitespace-nowrap">{gate.id}</code>
                     <span className="ml-2 truncate text-xs text-ink-3">{gate.name}</span>
                   </span>
                   <span className="flex shrink-0 items-center gap-1.5">
