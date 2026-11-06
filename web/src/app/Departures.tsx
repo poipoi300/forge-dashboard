@@ -90,7 +90,7 @@ function Counter({
       >
         {value ?? "–"}
       </span>
-      <span className={cn("truncate text-2xs", hot ? "text-board-ink" : "text-board-ink-2")}>
+      <span className={cn("text-2xs leading-tight", hot ? "text-board-ink" : "text-board-ink-2")}>
         {label}
         {hot ? <span className="sr-only"> (needs attention)</span> : null}
       </span>
