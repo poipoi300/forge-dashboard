@@ -83,12 +83,13 @@ export function ActivityFeed({
     placeholderData: keepPreviousData,
   });
   const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
-  const days: { label: string; entries: Entry[] }[] = [];
+  // A day label can recur when the stream is out of order, so each group is keyed by its first entry.
+  const days: { key: Entry["id"]; label: string; entries: Entry[] }[] = [];
   for (const entry of entries) {
     const label = dayLabel(entry.ts, now);
     const last = days[days.length - 1];
     if (last?.label === label) last.entries.push(entry);
-    else days.push({ label, entries: [entry] });
+    else days.push({ key: entry.id, label, entries: [entry] });
   }
 
   return (
@@ -130,7 +131,7 @@ export function ActivityFeed({
       ) : (
         <div className="flex flex-col gap-4">
           {days.map((day) => (
-            <section key={day.label} aria-label={day.label}>
+            <section key={day.key} aria-label={day.label}>
               <h3 className="sticky top-20 z-[1] mb-1 bg-paper py-0.5 text-2xs font-semibold text-ink-3">
                 {day.label}
               </h3>

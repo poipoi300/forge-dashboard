@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { screen, waitFor, within } from "@testing-library/react";
 import { ActivityFeed } from "@/features/activity/ActivityFeed";
 import { makeActivityEntry, makeActivityPage } from "./activity-support";
@@ -120,6 +120,7 @@ describe("ActivityFeed timeline", () => {
   });
 
   test("starts a new group when the day changes between two adjacent entries", async () => {
+    const consoleError = spyOn(console, "error");
     mockApi().action(
       ACTIVITY,
       makeActivityPage([
@@ -135,6 +136,9 @@ describe("ActivityFeed timeline", () => {
       "Yesterday",
       "Today",
     ]);
+    // A recurring day label must not collide as a React key.
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("same key");
+    consoleError.mockRestore();
   });
 
   test("shows each entry's time of day, title and originating service", async () => {
