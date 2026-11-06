@@ -12,21 +12,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, ClassVar, Literal, override
 
 import watchfiles
 from pydantic import BaseModel, Field
 
+from forge_dashboard import gitops
 from forge_dashboard.core.events import Event
 from forge_dashboard.core.service import ActionError, Done, JobRef, NoInput, Service, action
+from forge_dashboard.core.tasks import BackgroundTasks
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain import discovery as rules
 from forge_dashboard.domain.discovery import CandidateKind, ForgeSignature
+from forge_dashboard.domain.gitparse import redact_url
 from forge_dashboard.services.jobs import JobContext, JobOutcome, JobsService, JobStatus
 
 if TYPE_CHECKING:
@@ -53,6 +57,7 @@ _IGNORED_PARTS = frozenset(
     }
 )
 WATCH_DEBOUNCE_MS = 800
+_log = logging.getLogger("forge_dashboard.discovery")
 
 
 class Candidate(BaseModel):
@@ -218,6 +223,20 @@ def classify_change(project: Path, changed: Path) -> ChangeKind | None:
     return "worktree"
 
 
+def clone_folder_name(url: str, given: str | None) -> str:
+    """The folder a clone goes in: the given name, else the URL's last segment; one plain name, never a path.
+
+    Raises:
+        ActionError: when no name can be derived or it would leave the chosen root.
+    """
+    name = given or url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+    if not name:
+        raise ActionError("could not derive a folder name from the URL; give one")
+    if name in (".", "..") or PurePath(name).name != name or not name.isprintable():
+        raise ActionError(f"{name!r} is not a plain folder name", status=422)
+    return name
+
+
 def _drives() -> list[str]:
     """Filesystem roots for the folder picker, without probing each one (network drives can be slow)."""
     if sys.platform == "win32":
@@ -240,6 +259,7 @@ class DiscoveryService(Service[DiscoveryConfig, DiscoveryState]):
         self._candidate_listeners: list[CandidatesListener] = []
         self._watch_task: asyncio.Task[None] | None = None
         self._watch_stop = asyncio.Event()
+        self._background = BackgroundTasks()
         self._scan_lock = asyncio.Lock()
 
     # --- wiring ---
@@ -376,7 +396,7 @@ class DiscoveryService(Service[DiscoveryConfig, DiscoveryState]):
         if not existing:
             return
         self._watch_stop = asyncio.Event()
-        self._watch_task = asyncio.create_task(self._watch(existing, self._watch_stop), name="discovery-watch")
+        self._watch_task = self._background.spawn(self._watch(existing, self._watch_stop), name="discovery-watch")
 
     async def _stop_watching(self) -> None:
         if self._watch_task is None:
@@ -396,7 +416,10 @@ class DiscoveryService(Service[DiscoveryConfig, DiscoveryState]):
         async for changes in watchfiles.awatch(
             *projects, watch_filter=relevant, debounce=WATCH_DEBOUNCE_MS, stop_event=stop, recursive=True
         ):
-            await self._dispatch(roots, {Path(path) for _change, path in changes})
+            try:
+                await self._dispatch(roots, {Path(path) for _change, path in changes})
+            except Exception:  # a listener's failure must not end the watch for every project
+                _log.exception("a change listener failed")
 
     async def _dispatch(self, roots: list[Path], changed: set[Path]) -> None:
         kinds_by_project: dict[Path, set[ChangeKind]] = {}
@@ -478,16 +501,19 @@ class DiscoveryService(Service[DiscoveryConfig, DiscoveryState]):
         root = Path(request.root)
         if not root.is_dir():
             raise ActionError(f"{root} is not a directory")
-        name = request.name or request.url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-        if not name:
-            raise ActionError("could not derive a folder name from the URL; give one")
+        if request.url.startswith("-"):
+            raise ActionError("a clone URL cannot start with '-'", status=422)
+        name = clone_folder_name(request.url, request.name)
         target = root / name
         if target.exists():
             raise ActionError(f"{target} already exists", status=409)
 
         async def work(context: JobContext) -> JobOutcome:
-            env = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-            result = await context.run(["git", "clone", "--progress", request.url, str(target)], root, env)
+            # The URL may embed a token: the log shows it redacted, and git still gets the real one.
+            context.log(f"$ git clone --progress {redact_url(request.url)} {target}")
+            result = await context.run(
+                ["git", "clone", "--progress", "--", request.url, str(target)], root, gitops.NON_INTERACTIVE, echo=False
+            )
             if not result.ok:
                 return JobOutcome(status=JobStatus.FAILED, summary=f"git clone exited {result.exit_code}")
             await self.add_project(PathInput(path=str(target)))

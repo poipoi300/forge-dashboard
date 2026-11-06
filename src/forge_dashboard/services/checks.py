@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, override
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from forge_dashboard import worktrees
 from forge_dashboard.core.events import Event, Severity
@@ -40,6 +40,9 @@ from forge_dashboard.services.scheduler import SchedulerService
 
 if TYPE_CHECKING:
     from forge_dashboard.core.runtime import Runtime
+
+# Gates run in the user's checkout so they judge the working state, which is why starting one asks first.
+FIXERS_REWRITE = "Fixers rewrite files in the working tree in place, uncommitted edits included."
 
 Outcome = Literal["passed", "failed", "error", "timeout"]
 OUTCOME_UI = ui(
@@ -98,6 +101,9 @@ class ProjectChecks(BaseModel):
         default_factory=list, json_schema_extra=ui(columns=["label", "outcome", "tests", "duration_s", "ran_at"])
     )
     gates: list[Gate] = Field(default_factory=list, json_schema_extra=ui(columns=["id", "name", "stages"]))
+    gates_error: str | None = Field(
+        None, json_schema_extra=ui(help="Why .pre-commit-config.yaml could not be read, so `gates` is empty.")
+    )
     coverage: CoverageReport | None = None
     settings: CheckSettings = Field(default_factory=CheckSettings)
 
@@ -192,25 +198,60 @@ class CheckRegressed(Event):
         return "error"
 
 
+class GateConfigError(ValueError):
+    """`.pre-commit-config.yaml` exists but is not a pre-commit configuration."""
+
+
+class PreCommitHook(BaseModel):
+    id: str
+    name: str | None = None
+    stages: list[str] | None = None
+
+
+class PreCommitRepo(BaseModel):
+    hooks: list[PreCommitHook] | None = None
+
+
+class PreCommitConfig(BaseModel):
+    default_stages: list[str] | None = None
+    repos: list[PreCommitRepo] | None = None
+
+
 def parse_gates(repo: Path) -> list[Gate]:
-    """Hook ids and stages from `.pre-commit-config.yaml` (stages default to the config's `default_stages`)."""
+    """Hook ids and stages from `.pre-commit-config.yaml` (stages default to the config's `default_stages`).
+
+    Raises:
+        GateConfigError: when the file is not valid YAML or not the shape pre-commit reads.
+    """
     path = repo / ".pre-commit-config.yaml"
     if not path.is_file():
         return []
     try:
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return []
-    if not isinstance(config, dict):
-        return []
-    default_stages = [str(stage) for stage in config.get("default_stages") or ["pre-commit"]]
-    gates: list[Gate] = []
-    for repo_entry in config.get("repos") or []:
-        for hook in (repo_entry or {}).get("hooks") or []:
-            if isinstance(hook, dict) and "id" in hook:
-                stages = [str(stage) for stage in hook.get("stages") or default_stages]
-                gates.append(Gate(id=str(hook["id"]), name=str(hook.get("name") or hook["id"]), stages=stages))
-    return gates
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise GateConfigError(f"{path.name} is not valid YAML: {' '.join(str(error).split())}") from error
+    try:
+        config = PreCommitConfig.model_validate({} if document is None else document)
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in problem['loc']) or 'document'}: {problem['msg']}"
+            for problem in error.errors(include_url=False, include_context=False, include_input=False)
+        )
+        raise GateConfigError(f"{path.name} is not a pre-commit configuration: {problems}") from error
+    default_stages = config.default_stages or ["pre-commit"]
+    return [
+        Gate(id=hook.id, name=hook.name or hook.id, stages=hook.stages or default_stages)
+        for configured in config.repos or []
+        for hook in configured.hooks or []
+    ]
+
+
+def read_gates(repo: Path) -> tuple[list[Gate], str | None]:
+    """The gates a project declares, and why they could not be read when the config is invalid."""
+    try:
+        return parse_gates(repo), None
+    except GateConfigError as error:
+        return [], str(error)
 
 
 def precommit_argv(repo: Path) -> list[str]:
@@ -262,10 +303,12 @@ class ChecksService(Service[ChecksConfig, ChecksState], ProjectListener):
     async def project_upserted(self, record: ProjectRecord) -> None:
         settings = await self._load_settings(record.id)
         latest = await self._latest_runs(record)
+        gates, gates_error = await asyncio.to_thread(read_gates, record.path)
         self._state[record.id] = ProjectChecks(
             project_id=record.id,
             checks=latest,
-            gates=await asyncio.to_thread(parse_gates, record.path),
+            gates=gates,
+            gates_error=gates_error,
             coverage=await asyncio.to_thread(combined_coverage, record.path),
             settings=settings,
         )
@@ -284,7 +327,7 @@ class ChecksService(Service[ChecksConfig, ChecksState], ProjectListener):
         if project is None:
             return
         if "worktree" in kinds:
-            project.gates = await asyncio.to_thread(parse_gates, record.path)
+            project.gates, project.gates_error = await asyncio.to_thread(read_gates, record.path)
             project.coverage = await asyncio.to_thread(combined_coverage, record.path)
         self._publish(record.id)
         schedule = project.settings.schedule
@@ -602,28 +645,46 @@ class ChecksService(Service[ChecksConfig, ChecksState], ProjectListener):
             kind=kind, title=title, work=work, project_id=record.id, resources=["checks", f"repo:{record.id}"]
         )
 
-    @action(title="Run gate", long_running=True)
+    @action(
+        title="Run gate",
+        description=f"Run one pre-commit hook over all files. {FIXERS_REWRITE}",
+        long_running=True,
+        confirm=True,
+    )
     async def run_gate(self, request: GateInput) -> JobRef:
-        """Run one pre-commit hook over all files (fixers may rewrite files, as in a commit)."""
+        """Run one hook of the project's pre-commit config in its checkout."""
         record = self._projects.record(request.project_id)
-        gates = {gate.id: gate for gate in parse_gates(record.path)}
+        try:
+            gates = {gate.id: gate for gate in parse_gates(record.path)}
+        except GateConfigError as error:
+            raise ActionError(str(error), status=409) from error
         gate = gates.get(request.gate_id)
         if gate is None:
             raise ActionError(f"no gate {request.gate_id!r} in .pre-commit-config.yaml", status=404)
         stage = ["--hook-stage", gate.stages[0]] if gate.stages and gate.stages[0] != "pre-commit" else []
         return await self._gate_job(record, f"Gate {gate.id}", "checks.gate", ["run", gate.id, "--all-files", *stage])
 
-    @action(title="Run all commit gates", long_running=True)
+    @action(
+        title="Run all commit gates",
+        description=f"`pre-commit run --all-files`. {FIXERS_REWRITE}",
+        long_running=True,
+        confirm=True,
+    )
     async def run_commit_gates(self, request: ProjectRef) -> JobRef:
-        """`pre-commit run --all-files` (fixers may rewrite files, as in a commit)."""
+        """Run every commit-stage hook of the project's pre-commit config in its checkout."""
         record = self._projects.record(request.project_id)
         if not (record.path / ".pre-commit-config.yaml").is_file():
             raise ActionError("this project has no .pre-commit-config.yaml", status=409)
         return await self._gate_job(record, "Commit gates", "checks.commit-gates", ["run", "--all-files"])
 
-    @action(title="Run push gate", long_running=True)
+    @action(
+        title="Run push gate",
+        description=f"`pre-commit run --hook-stage pre-push --all-files`. {FIXERS_REWRITE}",
+        long_running=True,
+        confirm=True,
+    )
     async def run_push_gate(self, request: ProjectRef) -> JobRef:
-        """`pre-commit run --hook-stage pre-push --all-files`."""
+        """Run every push-stage hook of the project's pre-commit config in its checkout."""
         record = self._projects.record(request.project_id)
         if not (record.path / ".pre-commit-config.yaml").is_file():
             raise ActionError("this project has no .pre-commit-config.yaml", status=409)

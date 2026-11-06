@@ -145,10 +145,15 @@ class Service[ConfigT: BaseModel, StateT: BaseModel]:
             self.runtime.log.warning("config for %s no longer validates, using defaults: %s", self.id, error)
 
     async def start(self) -> None:
-        """Begin background work. Called once, after every service has loaded its config."""
+        """Begin background work. Called after every service has loaded its config.
+
+        A restore calls `stop` and then `start` on every service again, so
+        `start` must rebuild whatever `stop` released and re-read what the
+        database held.
+        """
 
     async def stop(self) -> None:
-        """End background work."""
+        """End background work and release what `start` or later use acquired, so `start` can run again."""
 
     async def on_config_changed(self, previous: ConfigT) -> None:
         """React to an edited config."""

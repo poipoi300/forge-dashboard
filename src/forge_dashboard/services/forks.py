@@ -4,20 +4,26 @@ A sync run is a job, always in an isolated worktree under the data dir; it
 never touches the user's working tree and never stashes their work:
 
 1. Fetch upstream and origin; create `forge-sync/<upstream-branch>-<stamp>` from the target.
-2. Merge (or rebase onto) upstream. Clean: go to 4.
+2. Merge (or rebase onto) upstream. Clean: go to 4. A merge or rebase that fails for any
+   reason other than conflicts fails the run.
 3. Conflicts: brief the harness, let it edit, verify (no markers, `git diff --check`,
    files parse), retry with the failure appended up to the attempt limit.
 4. Run the policy's checks in the worktree; a failure parks the run.
-5. Commit (recording the upstream SHA and whether an agent resolved conflicts), then
-   fast-forward the target (directly when not checked out, in its checkout when clean,
-   otherwise park as ready-to-apply), and push when the policy says so.
+5. Commit (recording the upstream SHA and whether an agent resolved conflicts), verify the
+   result contains upstream, then fast-forward the target (directly when not checked out,
+   in its checkout when clean, otherwise park as ready-to-apply), and push when the policy says so.
+
+However a run's work ends, its record does too: an unexpected error parks the run (worktree
+kept, so it can be applied, retried, or aborted), and cancelling the job aborts it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, override
@@ -25,17 +31,18 @@ from typing import TYPE_CHECKING, ClassVar, Literal, override
 from pydantic import BaseModel, Field
 
 from forge_dashboard import gitops, landing, worktrees
+from forge_dashboard.branchwork import INTERRUPTED
 from forge_dashboard.core.events import Event, Severity
 from forge_dashboard.core.service import ActionError, Done, JobRef, ProjectRef, Service, action
 from forge_dashboard.core.tasks import BackgroundTasks
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain import forks as rules
 from forge_dashboard.domain.forks import PARKED, ConflictedFile, ForkPolicy, ForkRun, ForkRunState
-from forge_dashboard.domain.gitparse import Commit
+from forge_dashboard.domain.gitparse import Commit, redact_url
 from forge_dashboard.domain.harness import RunResult
 from forge_dashboard.domain.scheduling import ManualSchedule
 from forge_dashboard.domain.summary import ForkFacts
-from forge_dashboard.services.agents import AgentsService
+from forge_dashboard.services.agents import AgentsService, base_branch_of
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import ChangeKind
 from forge_dashboard.services.git import GitService
@@ -57,6 +64,9 @@ LAST_SYNC: dict[ForkRunState, LastSync] = {
     ForkRunState.FAILED: "failed",
 }
 PREVIEW_COMMITS = 50
+GIT_FAILURE_LINES = 20
+# Runs in these states own a worktree, so history pruning must not drop them.
+HOLDS_WORKTREE = PARKED | {ForkRunState.RUNNING}
 
 ParentLookup = Callable[[str], Awaitable[str | None]]
 
@@ -97,7 +107,14 @@ class ForkStatus(BaseModel):
 
 
 class ForksConfig(BaseModel):
-    keep_runs: int = Field(200, ge=10, le=5000, json_schema_extra=ui(advanced=True, help="Runs kept per fork."))
+    keep_runs: int = Field(
+        200,
+        ge=10,
+        le=5000,
+        json_schema_extra=ui(
+            advanced=True, help="Finished runs kept per fork; parked and running runs are never pruned."
+        ),
+    )
 
 
 class ForksState(BaseModel):
@@ -113,7 +130,6 @@ class PolicyInput(BaseModel):
 
 class PreviewInput(BaseModel):
     project_id: str = Field(json_schema_extra=ui(hidden=True, bind="project"))
-    fetch: bool = Field(False, json_schema_extra=ui(help="Fetch upstream first (network)."))
 
 
 class Preview(BaseModel):
@@ -211,6 +227,25 @@ class _Sync:
     run: ForkRun
     worktree: worktrees.Worktree | None = None
 
+    @property
+    def checkout(self) -> worktrees.Worktree:
+        """The run's worktree; asking before one exists is a bug in the flow."""
+        if self.worktree is None:
+            raise RuntimeError(f"fork run {self.run.id} has no worktree")
+        return self.worktree
+
+
+@dataclass(frozen=True)
+class _Round:
+    """What one merge or rebase step left behind: files to resolve, or why git failed outright."""
+
+    conflicted: list[str]
+    failure: str | None = None
+
+
+def _tail(text: str) -> str:
+    return "\n".join(text.strip().splitlines()[-GIT_FAILURE_LINES:])
+
 
 class ForksService(Service[ForksConfig, ForksState], ProjectListener):
     id = "forks"
@@ -240,6 +275,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         self._status: dict[str, ForkStatus] = {}
         self._parent_lookup: ParentLookup | None = None
         self._background = BackgroundTasks()
+        self._constructed_at = time.time()
         projects.listen(self)
 
     def connect_github(self, parent_lookup: ParentLookup) -> None:
@@ -248,13 +284,47 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
 
     @override
     async def start(self) -> None:
-        await self.runtime.db.execute(
-            "UPDATE fork_runs SET state = 'failed', ended_at = ? WHERE state = 'running'", (time.time(),)
-        )
+        await self._recover_interrupted()
+        await self._reconcile_worktrees()
 
     @override
     async def stop(self) -> None:
         await self._background.cancel_all()
+
+    async def _recover_interrupted(self) -> None:
+        """Runs still `running` at startup lost their job. One that kept a worktree is parked, so it can be
+        applied, retried, or aborted; one without is failed.
+        """
+        rows = await self.runtime.db.fetch_all("SELECT record FROM fork_runs WHERE state = ?", (ForkRunState.RUNNING,))
+        now = time.time()
+        for row in rows:
+            run = ForkRun.model_validate_json(row["record"])
+            kept = run.worktree is not None and await asyncio.to_thread(Path(run.worktree).is_dir)
+            await self._save(
+                run.model_copy(
+                    update={
+                        "state": ForkRunState.NEEDS_ATTENTION if kept else ForkRunState.FAILED,
+                        "detail": INTERRUPTED,
+                        "worktree": run.worktree if kept else None,
+                        "ended_at": now,
+                        "duration_s": now - run.started_at,
+                    }
+                )
+            )
+
+    async def _reconcile_worktrees(self) -> None:
+        """Remove worktree directories (and their branches) that no fork run and no branch run references."""
+        rows = await self.runtime.db.fetch_all(
+            "SELECT json_extract(record, '$.worktree') AS worktree FROM fork_runs "
+            "WHERE json_extract(record, '$.worktree') IS NOT NULL"
+        )
+        referenced = [Path(row["worktree"]) for row in rows]
+        referenced += await self._agents.branch_work.referenced_worktrees()
+        stray = await worktrees.reconcile(
+            self.runtime.paths.worktrees, referenced, untouched_since=self._constructed_at
+        )
+        for directory in stray:
+            self.runtime.log.warning("removed unreferenced worktree %s", directory)
 
     # --- registry hooks ---
 
@@ -304,8 +374,8 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
                 return candidate
         return "main"
 
-    async def refresh(self, record: ProjectRecord, *, predict: bool = True) -> ForkStatus:
-        """Recompute behind/ahead and the conflict prediction from the fetched upstream refs."""
+    async def _status_of(self, record: ProjectRecord, *, predict: bool) -> ForkStatus:
+        """Behind/ahead and the conflict prediction from the fetched refs; changes and publishes nothing."""
         policy = await self._policy(record.id)
         url, source = await self._upstream_url(record)
         last = await self._last_run(record.id)
@@ -324,6 +394,11 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
                 status = await self._compare(record, policy, status, predict=predict)
             except gitops.GitError as error:
                 status = status.model_copy(update={"error": error.message})
+        return status
+
+    async def refresh(self, record: ProjectRecord, *, predict: bool = True) -> ForkStatus:
+        """Recompute the fork's status from the fetched upstream refs and publish it."""
+        status = await self._status_of(record, predict=predict)
         self._status[record.id] = status
         self._publish(record.id)
         return status
@@ -332,13 +407,12 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         self, record: ProjectRecord, policy: ForkPolicy, status: ForkStatus, *, predict: bool
     ) -> ForkStatus:
         upstream_branch = await self._upstream_branch(record, policy)
-        target = policy.target_branch or record.default_branch
+        target = policy.target_branch or await base_branch_of(record)
         upstream_ref = f"refs/remotes/{UPSTREAM_REMOTE}/{upstream_branch}"
-        fetched_at = _fetch_time(record.path)
         update: dict[str, object] = {
             "upstream_branch": upstream_branch,
             "target_branch": target,
-            "fetched_at": fetched_at,
+            "fetched_at": await gitops.fetch_time(record.path),
         }
         if not await gitops.ref_exists(record.path, upstream_ref):
             update["error"] = f"{UPSTREAM_REMOTE}/{upstream_branch} has not been fetched yet"
@@ -384,14 +458,26 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         await self.runtime.db.execute(
             "INSERT INTO fork_runs (id, project_id, job_id, started_at, ended_at, state, record) "
             "VALUES (?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET "
-            "ended_at = excluded.ended_at, state = excluded.state, record = excluded.record",
+            "job_id = excluded.job_id, ended_at = excluded.ended_at, state = excluded.state, record = excluded.record",
             (run.id, run.project_id, run.job_id, run.started_at, run.ended_at, run.state, run.model_dump_json()),
         )
+        if run.state not in HOLDS_WORKTREE:
+            await self._prune(run.project_id)
         status = self._status.get(run.project_id)
         if status is not None:
             self._status[run.project_id] = status.model_copy(update={"last_run": run})
             self._publish(run.project_id)
         return run
+
+    async def _prune(self, project_id: str) -> None:
+        """Keep the newest `keep_runs` runs of a fork, plus every run that still owns a worktree."""
+        protected = sorted(state.value for state in HOLDS_WORKTREE)
+        await self.runtime.db.execute(
+            "DELETE FROM fork_runs WHERE project_id = ? "
+            f"AND state NOT IN ({','.join('?' * len(protected))}) "
+            "AND id NOT IN (SELECT id FROM fork_runs WHERE project_id = ? ORDER BY started_at DESC LIMIT ?)",
+            (project_id, *protected, project_id, self.config.keep_runs),
+        )
 
     async def _last_run(self, project_id: str) -> ForkRun | None:
         row = await self.runtime.db.fetch_one(
@@ -454,6 +540,40 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         context.log(f"sync failed: {detail}")
         return JobOutcome(status=JobStatus.FAILED, summary=detail)
 
+    @asynccontextmanager
+    async def _guarded(self, context: JobContext, sync: _Sync) -> AsyncIterator[None]:
+        """Whatever ends the work on a still-running sync early, its record ends with it.
+
+        Cancelling the job aborts the run and removes its worktree and branch. Any other failure
+        parks the run with the error (the worktree is kept, so the work can be inspected, applied,
+        retried, or aborted), or fails it when no worktree is left. A run the work already finished stays as recorded.
+        """
+        try:
+            yield
+        except asyncio.CancelledError:
+            if sync.run.state is ForkRunState.RUNNING:
+                await self._cleanup(sync, delete_branch=True)
+                ended = time.time()
+                sync.run = await self._save(
+                    sync.run.model_copy(
+                        update={
+                            "state": ForkRunState.ABORTED,
+                            "detail": "cancelled with its job",
+                            "ended_at": ended,
+                            "duration_s": ended - sync.run.started_at,
+                        }
+                    )
+                )
+            raise
+        except Exception as error:
+            if sync.run.state is ForkRunState.RUNNING:
+                kept = sync.worktree is not None and await asyncio.to_thread(sync.worktree.path.is_dir)
+                if not kept:
+                    await self._cleanup(sync, delete_branch=True)
+                state = ForkRunState.NEEDS_ATTENTION if kept else ForkRunState.FAILED
+                await self._finish(context, sync, state, worktrees.describe_failure(error))
+            raise
+
     async def _sync(self, context: JobContext, record: ProjectRecord) -> JobOutcome:
         policy = await self._policy(record.id)
         await self._ensure_upstream_remote(record, policy)
@@ -473,7 +593,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
                     raise ActionError(f"git fetch {remote} failed")
         await gitops.run(record.path, "remote", "set-head", UPSTREAM_REMOTE, "--auto", check=False, timeout_s=120)
         upstream_branch = await self._upstream_branch(record, policy)
-        target = policy.target_branch or record.default_branch
+        target = policy.target_branch or await base_branch_of(record)
         upstream_ref = f"{UPSTREAM_REMOTE}/{upstream_branch}"
         upstream_sha = (await gitops.output(record.path, "rev-parse", f"refs/remotes/{upstream_ref}")).strip()
         target_sha = (await gitops.output(record.path, "rev-parse", f"refs/heads/{target}")).strip()
@@ -490,79 +610,90 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
             started_at=time.time(),
         )
         sync = _Sync(record=record, policy=policy, run=await self._save(run))
-        if await gitops.is_ancestor(record.path, upstream_sha, target_sha):
-            return await self._finish(
-                context, sync, ForkRunState.UP_TO_DATE, f"{target} already contains {upstream_ref}"
-            )
+        async with self._guarded(context, sync):
+            if await gitops.is_ancestor(record.path, upstream_sha, target_sha):
+                return await self._finish(
+                    context, sync, ForkRunState.UP_TO_DATE, f"{target} already contains {upstream_ref}"
+                )
 
-        branch = f"forge-sync/{upstream_branch}-{worktrees.timestamp()}"
-        path = worktrees.worktree_path(self.runtime.paths.worktrees, record.id, branch)
-        sync.worktree = await worktrees.create(record.path, path, base=target_sha, branch=branch)
-        sync.run = await self._save(sync.run.model_copy(update={"branch": branch, "worktree": str(path)}))
-        context.progress(0.2, f"{policy.strategy} {upstream_ref}")
-        return await self._integrate(context, sync, extra_instructions=None)
+            branch = f"forge-sync/{upstream_branch}-{worktrees.timestamp()}"
+            path = worktrees.worktree_path(self.runtime.paths.worktrees, record.id, branch)
+            sync.worktree = await worktrees.create(record.path, path, base=target_sha, branch=branch)
+            sync.run = await self._save(sync.run.model_copy(update={"branch": branch, "worktree": str(path)}))
+            context.progress(0.2, f"{policy.strategy} {upstream_ref}")
+            return await self._integrate(context, sync, extra_instructions=None, step=None)
 
-    async def _integrate(self, context: JobContext, sync: _Sync, *, extra_instructions: str | None) -> JobOutcome:
-        """Steps 2-5 on the run's worktree: merge or rebase, resolve, check, commit, land."""
-        assert sync.worktree is not None
-        path = sync.worktree.path
-        if sync.run.state is ForkRunState.RUNNING and not sync.run.conflicted_files:
-            started = await self._start_integration(context, sync)
-        else:
-            started = await self._conflicted(path)
-        while started:
+    async def _integrate(
+        self, context: JobContext, sync: _Sync, *, extra_instructions: str | None, step: _Round | None
+    ) -> JobOutcome:
+        """Steps 2-5 on the run's worktree: merge or rebase, resolve, check, commit, land.
+
+        `step` is the round a caller already ran; None starts the merge or rebase here (or, for a
+        run that has resolved conflicts before, picks up whatever conflicts the worktree holds).
+        """
+        if step is None:
+            if sync.run.state is ForkRunState.RUNNING and not sync.run.conflicted_files:
+                step = await self._start_integration(context, sync)
+            else:
+                step = _Round(await self._conflicted(sync.checkout.path))
+        while step.conflicted:
             sync.run = await self._save(
-                sync.run.model_copy(update={"conflicted_files": sorted(set(sync.run.conflicted_files) | set(started))})
+                sync.run.model_copy(
+                    update={"conflicted_files": sorted(set(sync.run.conflicted_files) | set(step.conflicted))}
+                )
             )
             if sync.policy.conflicts == "stop":
                 return await self._finish(
                     context,
                     sync,
                     ForkRunState.CONFLICT,
-                    f"{len(started)} conflicted file{'' if len(started) == 1 else 's'}",
+                    f"{len(step.conflicted)} conflicted file{'' if len(step.conflicted) == 1 else 's'}",
                 )
-            resolved, failure = await self._resolve(context, sync, started, extra_instructions)
+            resolved, failure = await self._resolve(context, sync, step.conflicted, extra_instructions)
             if not resolved:
                 return await self._finish(context, sync, ForkRunState.NEEDS_ATTENTION, failure)
-            started = await self._continue(context, sync)
+            step = await self._continue(context, sync)
+        if step.failure is not None:
+            return await self._fail_integration(context, sync, step.failure)
         return await self._check_commit_land(context, sync)
 
-    async def _start_integration(self, context: JobContext, sync: _Sync) -> list[str]:
-        path = sync.worktree.path if sync.worktree else Path()
-        env = await worktrees.identity_env(path)
+    async def _fail_integration(self, context: JobContext, sync: _Sync, failure: str) -> JobOutcome:
+        """Git itself failed (not a conflict): nothing was merged, so the worktree and branch have no value."""
+        await self._cleanup(sync, delete_branch=True)
+        return await self._finish(context, sync, ForkRunState.FAILED, failure)
+
+    async def _start_integration(self, context: JobContext, sync: _Sync) -> _Round:
         if sync.policy.strategy == "merge":
-            argv = ["git", "-C", str(path), "merge", "--no-ff", "--no-commit", sync.run.upstream_ref]
-        else:
-            argv = ["git", "-C", str(path), "rebase", sync.run.upstream_ref]
-        await context.run(argv, path, {**gitops.NON_INTERACTIVE, **env, "GIT_EDITOR": "true"}, timeout_s=600)
-        return await self._conflicted(path)
+            return await self._git_step(context, sync, "merge", "--no-ff", "--no-commit", sync.run.upstream_ref)
+        return await self._git_step(context, sync, "rebase", sync.run.upstream_ref)
+
+    async def _git_step(self, context: JobContext, sync: _Sync, *args: str) -> _Round:
+        """Run a merge or rebase command in the worktree; unmerged paths are conflicts, any other failure is git's."""
+        path = sync.checkout.path
+        env = {**gitops.NON_INTERACTIVE, **await worktrees.identity_env(path), "GIT_EDITOR": "true"}
+        result = await context.run(["git", "-C", str(path), *args], path, env, timeout_s=600)
+        conflicted = await self._conflicted(path)
+        if conflicted or result.ok:
+            return _Round(conflicted)
+        return _Round([], failure=f"git {args[0]} failed: {_tail(gitops.failure_reason(result))}")
 
     @staticmethod
     async def _conflicted(path: Path) -> list[str]:
         raw = await gitops.output(path, "diff", "--name-only", "--diff-filter=U")
         return [line for line in raw.splitlines() if line]
 
-    async def _continue(self, context: JobContext, sync: _Sync) -> list[str]:
+    async def _continue(self, context: JobContext, sync: _Sync) -> _Round:
         """After a resolution round: a merge is done; a rebase continues and may stop on the next commit."""
         if sync.policy.strategy == "merge":
-            return []
-        path = sync.worktree.path if sync.worktree else Path()
-        env = await worktrees.identity_env(path)
-        await context.run(
-            ["git", "-C", str(path), "rebase", "--continue"],
-            path,
-            {**gitops.NON_INTERACTIVE, **env, "GIT_EDITOR": "true"},
-            timeout_s=600,
-        )
-        return await self._conflicted(path)
+            return _Round([])
+        return await self._git_step(context, sync, "rebase", "--continue")
 
     async def _side(self, path: Path, stage: int, file: str) -> str | None:
         result = await gitops.run(path, "show", f":{stage}:{file}", check=False)
         return result.stdout if result.ok else None
 
     async def _brief(self, sync: _Sync, files: list[str], failure: str | None, extra: str | None) -> str:
-        assert sync.worktree is not None
-        path = sync.worktree.path
+        path = sync.checkout.path
         conflicted = [
             ConflictedFile(
                 path=file,
@@ -617,12 +748,11 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
     async def _resolve(
         self, context: JobContext, sync: _Sync, files: list[str], extra: str | None
     ) -> tuple[bool, str | None]:
-        assert sync.worktree is not None
         failure: str | None = None
         for _attempt in range(sync.policy.max_agent_attempts):
             prompt = await self._brief(sync, files, failure, extra)
             agent = await self._agents.run_agent(
-                context, kind="fork_sync", project_id=sync.record.id, prompt=prompt, cwd=sync.worktree.path
+                context, kind="fork_sync", project_id=sync.record.id, prompt=prompt, cwd=sync.checkout.path
             )
             result = agent.result
             sync.run = await self._save(
@@ -638,7 +768,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
             if agent.outcome != "succeeded":
                 failure = f"the agent run ended {agent.outcome}"
                 continue
-            failure = await self._verify(sync.worktree.path, files)
+            failure = await self._verify(sync.checkout.path, files)
             if failure is None:
                 context.log(f"conflicts resolved after {sync.run.agent_attempts} agent attempt(s)")
                 return True, None
@@ -646,8 +776,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         return False, f"unresolved after {sync.policy.max_agent_attempts} attempts: {failure}"
 
     async def _check_commit_land(self, context: JobContext, sync: _Sync) -> JobOutcome:
-        assert sync.worktree is not None
-        path = sync.worktree.path
+        path = sync.checkout.path
         record = sync.record
         check_ids = self._checks_for(record, sync.policy)
         if check_ids and record.manifest is not None:
@@ -690,26 +819,40 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         return await self._land(context, sync)
 
     async def _land(self, context: JobContext, sync: _Sync) -> JobOutcome:
-        assert sync.worktree is not None and sync.run.result_sha is not None
         record = sync.record
-        context.progress(0.9, f"updating {sync.run.target_branch}")
+        run = sync.run
+        result_sha = run.result_sha
+        assert result_sha is not None
+        if not await gitops.is_ancestor(record.path, run.upstream_sha, result_sha):
+            detail = (
+                f"the result {result_sha[:12]} does not contain upstream {run.upstream_sha[:12]}; nothing was landed"
+            )
+            return await self._finish(context, sync, ForkRunState.NEEDS_ATTENTION, detail)
+        context.progress(0.9, f"updating {run.target_branch}")
         landed = await landing.land(
-            record.path, sync.run.target_branch, sync.run.result_sha, rewrite=sync.policy.strategy == "rebase"
+            record.path, run.target_branch, result_sha, rewrite=sync.policy.strategy == "rebase"
         )
         if landed.outcome == "dirty":
-            detail = f"{sync.run.target_branch} is checked out with local changes at {landed.checkout}"
+            detail = f"{run.target_branch} is checked out with local changes at {landed.checkout}"
+            return await self._finish(context, sync, ForkRunState.READY_TO_APPLY, detail)
+        if landed.outcome == "checked-out":
+            detail = (
+                f"{run.target_branch} is checked out at {landed.checkout} and a rebase rewrites it; "
+                f"check out another branch there, then apply"
+            )
+            return await self._finish(context, sync, ForkRunState.READY_TO_APPLY, detail)
+        if landed.outcome == "refused" and landed.checkout is not None:
+            detail = f"git refused to update {run.target_branch} in {landed.checkout}: {_tail(landed.detail or '')}"
             return await self._finish(context, sync, ForkRunState.READY_TO_APPLY, detail)
         if landed.outcome != "updated":
-            return await self._finish(
-                context,
-                sync,
-                ForkRunState.NEEDS_ATTENTION,
-                f"{sync.run.target_branch} moved during the sync ({landed.outcome})",
-            )
+            detail = f"{run.target_branch} moved during the sync ({landed.outcome})"
+            if landed.detail:
+                detail += f": {_tail(landed.detail)}"
+            return await self._finish(context, sync, ForkRunState.NEEDS_ATTENTION, detail)
         if sync.policy.auto_push and "origin" in await gitops.remotes(record.path):
             lease = ["--force-with-lease"] if sync.policy.strategy == "rebase" else []
             pushed = await context.run(
-                ["git", "-C", str(record.path), "push", *lease, "origin", sync.run.target_branch],
+                ["git", "-C", str(record.path), "push", *lease, "origin", run.target_branch],
                 record.path,
                 gitops.NON_INTERACTIVE,
                 timeout_s=600,
@@ -721,11 +864,12 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         await self._cleanup(sync, delete_branch=True)
         attempts = sync.run.agent_attempts
         how = f"agent resolved conflicts in {attempts} attempt(s)" if attempts else "no conflicts"
-        return await self._finish(context, sync, ForkRunState.SYNCED, f"{sync.run.target_branch} updated; {how}")
+        return await self._finish(context, sync, ForkRunState.SYNCED, f"{run.target_branch} updated; {how}")
 
     async def _cleanup(self, sync: _Sync, *, delete_branch: bool) -> None:
         if sync.worktree is not None:
             await worktrees.remove(sync.worktree, delete_branch=delete_branch)
+            sync.worktree = None
             sync.run = await self._save(sync.run.model_copy(update={"worktree": None}))
 
     async def _ensure_upstream_remote(self, record: ProjectRecord, policy: ForkPolicy) -> None:
@@ -734,10 +878,10 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
         wanted = policy.upstream_url
         if wanted is None and UPSTREAM_REMOTE not in remotes and self._parent_lookup is not None:
             wanted = await self._parent_lookup(record.id)
-        if wanted is None or remotes.get(UPSTREAM_REMOTE) == wanted:
+        if wanted is None or remotes.get(UPSTREAM_REMOTE) == redact_url(wanted):
             return
         verb = "set-url" if UPSTREAM_REMOTE in remotes else "add"
-        await gitops.run(record.path, "remote", verb, UPSTREAM_REMOTE, wanted)
+        await gitops.run(record.path, "remote", verb, "--", UPSTREAM_REMOTE, wanted)
 
     # --- actions ---
 
@@ -785,11 +929,13 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
 
     @action(title="Fork status and preview", query=True)
     async def preview(self, request: PreviewInput) -> Preview:
-        """Behind/ahead, the commits to pull, files changed, and the predicted conflicts."""
+        """Behind/ahead, the commits to pull, files changed, and the predicted conflicts, from the refs already fetched.
+
+        Reads only: it fetches nothing and changes no service state, so a view that follows the
+        service's revisions can call it freely. "Refresh fork status" is the action that fetches.
+        """
         record = self._projects.record(request.project_id)
-        if request.fetch:
-            await gitops.run(record.path, "fetch", "--prune", UPSTREAM_REMOTE, timeout_s=600)
-        status = await self.refresh(record)
+        status = await self._status_of(record, predict=True)
         if status.upstream_branch is None or status.target_branch is None or status.error:
             return Preview(status=status, commits=[], files=[])
         upstream_ref = f"refs/remotes/{UPSTREAM_REMOTE}/{status.upstream_branch}"
@@ -828,7 +974,8 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
             raise ActionError("the run did not record that base", status=409)
         return RunDiff(run=run, against=request.against, diff=await gitops.diff(Path(run.worktree), base))
 
-    async def _parked(self, run_id: str) -> tuple[ForkRun, ProjectRecord, _Sync]:
+    async def _parked(self, run_id: str) -> _Sync:
+        """The run as it is now, refused unless it is parked with a worktree to act on."""
         run = await self._run(run_id)
         if run.state not in PARKED:
             raise ActionError(f"run is {run.state.value}, not parked", status=409)
@@ -836,70 +983,80 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
             raise ActionError("the run has no worktree", status=409)
         record = self._projects.record(run.project_id)
         worktree = worktrees.Worktree(repo=record.path, path=Path(run.worktree), branch=run.branch)
-        return run, record, _Sync(record=record, policy=await self._policy(record.id), run=run, worktree=worktree)
+        return _Sync(record=record, policy=await self._policy(record.id), run=run, worktree=worktree)
+
+    async def _resume(self, context: JobContext, run_id: str) -> _Sync:
+        """In the job: re-read the run (another job may have settled it while this one queued), then mark it running."""
+        sync = await self._parked(run_id)
+        sync.run = await self._save(
+            sync.run.model_copy(
+                update={"state": ForkRunState.RUNNING, "job_id": context.job_id, "ended_at": None, "duration_s": None}
+            )
+        )
+        return sync
 
     @action(title="Apply", long_running=True)
     async def apply(self, request: RunInput) -> JobRef:
         """Land a parked run on its target (after you finished it by hand, or the checkout became clean)."""
-        run, record, sync = await self._parked(request.run_id)
+        record = (await self._parked(request.run_id)).record
 
         async def work(context: JobContext) -> JobOutcome:
-            sync.run = await self._save(
-                sync.run.model_copy(update={"state": ForkRunState.RUNNING, "job_id": context.job_id})
-            )
-            path = sync.worktree.path if sync.worktree is not None else Path(run.worktree or "")
-            present = [file for file in sync.run.conflicted_files if (path / file).is_file()]
-            leftover = [
-                file
-                for file in present
-                if not rules.is_conflict_marker_free((path / file).read_text(encoding="utf-8", errors="replace"))
-            ]
-            if leftover:
-                return await self._finish(
-                    context, sync, ForkRunState.CONFLICT, f"markers remain in {', '.join(leftover)}"
-                )
-            if sync.run.result_sha is None:
-                if present:
-                    await gitops.run(path, "add", "--", *present)
-                if await self._continue(context, sync):
+            sync = await self._resume(context, request.run_id)
+            async with self._guarded(context, sync):
+                path = sync.checkout.path
+                present = [file for file in sync.run.conflicted_files if (path / file).is_file()]
+                leftover = [
+                    file
+                    for file in present
+                    if not rules.is_conflict_marker_free((path / file).read_text(encoding="utf-8", errors="replace"))
+                ]
+                if leftover:
                     return await self._finish(
-                        context, sync, ForkRunState.CONFLICT, "the rebase stopped on more conflicts"
+                        context, sync, ForkRunState.CONFLICT, f"markers remain in {', '.join(leftover)}"
                     )
-                return await self._check_commit_land(context, sync)
-            if (await gitops.status(path)).dirty:
-                await worktrees.commit_all(path, f"Finish fork sync of {run.upstream_ref}")
-                head = (await gitops.output(path, "rev-parse", "HEAD")).strip()
-                sync.run = await self._save(sync.run.model_copy(update={"result_sha": head}))
-            return await self._land(context, sync)
+                if sync.run.result_sha is None:
+                    if present:
+                        await gitops.run(path, "add", "--", *present)
+                    step = await self._continue(context, sync)
+                    if step.failure is not None:
+                        return await self._fail_integration(context, sync, step.failure)
+                    if step.conflicted:
+                        return await self._finish(
+                            context, sync, ForkRunState.CONFLICT, "the rebase stopped on more conflicts"
+                        )
+                    return await self._check_commit_land(context, sync)
+                if (await gitops.status(path)).dirty:
+                    await worktrees.commit_all(path, f"Finish fork sync of {sync.run.upstream_ref}")
+                    head = (await gitops.output(path, "rev-parse", "HEAD")).strip()
+                    sync.run = await self._save(sync.run.model_copy(update={"result_sha": head}))
+                return await self._land(context, sync)
 
         return await self._job(record, f"Apply fork sync: {record.id}", work)
 
     @action(title="Retry agent", long_running=True)
     async def retry_agent(self, request: RetryInput) -> JobRef:
         """Run the agent again on a parked run, with your extra instructions."""
-        _run, record, sync = await self._parked(request.run_id)
+        record = (await self._parked(request.run_id)).record
 
         async def work(context: JobContext) -> JobOutcome:
-            sync.run = await self._save(
-                sync.run.model_copy(update={"state": ForkRunState.RUNNING, "job_id": context.job_id})
-            )
-            sync.policy = sync.policy.model_copy(update={"conflicts": "agent"})
-            path = sync.worktree.path if sync.worktree else Path()
-            files = await self._conflicted(path) or [f for f in sync.run.conflicted_files if (path / f).is_file()]
-            resolved, failure = await self._resolve(context, sync, files, request.instructions)
-            if not resolved:
-                return await self._finish(context, sync, ForkRunState.NEEDS_ATTENTION, failure)
-            if await self._continue(context, sync):
-                return await self._integrate(context, sync, extra_instructions=request.instructions)
-            return await self._check_commit_land(context, sync)
+            sync = await self._resume(context, request.run_id)
+            async with self._guarded(context, sync):
+                sync.policy = sync.policy.model_copy(update={"conflicts": "agent"})
+                path = sync.checkout.path
+                files = await self._conflicted(path) or [f for f in sync.run.conflicted_files if (path / f).is_file()]
+                resolved, failure = await self._resolve(context, sync, files, request.instructions)
+                if not resolved:
+                    return await self._finish(context, sync, ForkRunState.NEEDS_ATTENTION, failure)
+                step = await self._continue(context, sync)
+                return await self._integrate(context, sync, extra_instructions=request.instructions, step=step)
 
         return await self._job(record, f"Retry fork sync: {record.id}", work)
 
     @action(title="Abort", danger=True, confirm=True)
     async def abort(self, request: RunInput) -> Done:
         """Remove the run's worktree and branch; the target is untouched."""
-        run, _record, sync = await self._parked(request.run_id)
-        path = Path(run.worktree or "")
+        sync = await self._parked(request.run_id)
+        path = sync.checkout.path
         if path.is_dir():
             await gitops.run(path, "merge", "--abort", check=False)
             await gitops.run(path, "rebase", "--abort", check=False)
@@ -909,8 +1066,11 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
 
     @action(title="Refresh fork status")
     async def refresh_status(self, request: ProjectRef) -> ForkStatus:
-        """Recompute behind/ahead and the conflict prediction from fetched refs."""
-        return await self.refresh(self._projects.record(request.project_id))
+        """Fetch upstream, then recompute behind/ahead and the conflict prediction."""
+        record = self._projects.record(request.project_id)
+        if UPSTREAM_REMOTE in await gitops.remotes(record.path):
+            await gitops.run(record.path, "fetch", "--prune", UPSTREAM_REMOTE, timeout_s=600)
+        return await self.refresh(record)
 
 
 def _cost(result: RunResult | None) -> float:
@@ -919,11 +1079,3 @@ def _cost(result: RunResult | None) -> float:
 
 def _turns(result: RunResult | None) -> int:
     return result.turns if result is not None and result.turns is not None else 0
-
-
-def _fetch_time(repo: Path) -> float | None:
-    """When upstream was last fetched, from FETCH_HEAD; None before any fetch."""
-    try:
-        return (repo / ".git" / "FETCH_HEAD").stat().st_mtime
-    except FileNotFoundError:
-        return None

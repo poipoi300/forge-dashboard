@@ -12,6 +12,7 @@ result's cost, turns, and duration.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping
 from typing import Literal
 
@@ -27,13 +28,14 @@ class HarnessConfig(BaseModel):
 
     command: list[str] = Field(
         default_factory=lambda: ["claude", "-p", "--output-format", "stream-json", "--verbose"],
-        json_schema_extra=ui(widget="tags", help="Argv template; may use {prompt} and {prompt_path}."),
+        json_schema_extra=ui(
+            widget="tags",
+            help="Argv template; may use {prompt} and {prompt_path}. Output lines that are not stream-json "
+            "records go to the job log, so a plain-text agent runs without a transcript or cost.",
+        ),
     )
     stdin: str | None = Field(
         "{prompt}", json_schema_extra=ui(help="Template written to stdin; empty to pass nothing on stdin.")
-    )
-    output: Literal["stream-json", "text"] = Field(
-        "stream-json", json_schema_extra=ui(widget="select", help="stream-json enables live transcripts and cost.")
     )
     model_args: list[str] = Field(default_factory=lambda: ["--model", "{model}"], json_schema_extra=ui(widget="tags"))
     permission_args: list[str] = Field(
@@ -69,18 +71,47 @@ def _edit_only() -> RunKindSettings:
     return RunKindSettings(allowed_tools=list(EDIT_ONLY_TOOLS), disallowed_tools=["Bash", "WebFetch", "WebSearch"])
 
 
-def _with_bash() -> RunKindSettings:
-    return RunKindSettings(allowed_tools=[*EDIT_ONLY_TOOLS, "Bash"], disallowed_tools=["WebFetch", "WebSearch"])
+# The commands implementation work needs: tests, linters, type checks, and dependency tools. Delegated
+# issues carry text anyone can write, so a run may not reach for arbitrary commands, the network, or git.
+PROJECT_COMMANDS = [
+    "Bash(uv run:*)",
+    "Bash(uv sync:*)",
+    "Bash(uv lock:*)",
+    "Bash(uv add:*)",
+    "Bash(uv remove:*)",
+    "Bash(bun test:*)",
+    "Bash(bun run:*)",
+    "Bash(bun install:*)",
+    "Bash(bun add:*)",
+    "Bash(bun remove:*)",
+    "Bash(cargo test:*)",
+    "Bash(cargo build:*)",
+    "Bash(cargo check:*)",
+    "Bash(cargo clippy:*)",
+    "Bash(cargo fmt:*)",
+    "Bash(cargo update:*)",
+]
+
+
+def _with_project_commands() -> RunKindSettings:
+    """The agent edits files and runs the project's own tools; git stays with the dashboard."""
+    return RunKindSettings(
+        allowed_tools=[*EDIT_ONLY_TOOLS, *PROJECT_COMMANDS], disallowed_tools=["WebFetch", "WebSearch"]
+    )
 
 
 class RunKinds(BaseModel):
-    """Per-kind options. Conflict resolution is edit-only; implementation work may run commands."""
+    """Per-kind options. Conflict resolution is edit-only; implementation work may run the project's own tools."""
 
     fork_sync: RunKindSettings = Field(default_factory=_edit_only, json_schema_extra=ui(group="Fork sync"))
     standards: RunKindSettings = Field(default_factory=_edit_only, json_schema_extra=ui(group="Bring up to standards"))
     adopt: RunKindSettings = Field(default_factory=_edit_only, json_schema_extra=ui(group="Adopt"))
-    delegate: RunKindSettings = Field(default_factory=_with_bash, json_schema_extra=ui(group="Delegate issue"))
-    update_deps: RunKindSettings = Field(default_factory=_with_bash, json_schema_extra=ui(group="Update dependencies"))
+    delegate: RunKindSettings = Field(
+        default_factory=_with_project_commands, json_schema_extra=ui(group="Delegate issue")
+    )
+    update_deps: RunKindSettings = Field(
+        default_factory=_with_project_commands, json_schema_extra=ui(group="Update dependencies")
+    )
 
 
 RunKind = Literal["fork_sync", "standards", "adopt", "delegate", "update_deps"]
@@ -113,11 +144,15 @@ def render_stdin(harness: HarnessConfig, prompt: str, prompt_path: str) -> bytes
     return _fill(harness.stdin, {"prompt": prompt, "prompt_path": prompt_path}).encode("utf-8")
 
 
+_PLACEHOLDER = re.compile(r"\{(\w+)\}")
+
+
 def _fill(template: str, values: Mapping[str, str]) -> str:
-    """Replace `{name}` for known names only, so literal braces in a prompt are left alone."""
-    for name, value in values.items():
-        template = template.replace(f"{{{name}}}", value)
-    return template
+    """Replace `{name}` for known names only, in one pass so a value is never scanned for placeholders itself.
+
+    Unknown names and other braces stay as written: the prompt text lands in the same templates as the names.
+    """
+    return _PLACEHOLDER.sub(lambda match: values.get(match[1], match[0]), template)
 
 
 class RunResult(BaseModel):

@@ -8,6 +8,7 @@ in order and tracked in `PRAGMA user_version`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import time
@@ -146,6 +147,10 @@ class Database:
     def __init__(self, connection: aiosqlite.Connection, path: Path) -> None:
         self._connection = connection
         self.path = path
+        # A write is its statement plus its commit. Tasks share one connection, so without this lock
+        # another task's statement could land between them, and a snapshot taken there would find a
+        # transaction open that can only close after the snapshot finishes: a deadlock.
+        self._writing = asyncio.Lock()
 
     @classmethod
     async def open(cls, path: Path) -> Database:
@@ -156,7 +161,11 @@ class Database:
         await connection.execute("PRAGMA synchronous=NORMAL")
         await connection.execute("PRAGMA busy_timeout=5000")
         database = cls(connection, path)
-        await database._migrate()
+        try:
+            await database._migrate()
+        except BaseException:
+            await connection.close()
+            raise
         return database
 
     async def _migrate(self) -> None:
@@ -164,22 +173,27 @@ class Database:
             row = await cursor.fetchone()
         version = int(row[0]) if row is not None else 0
         for index, script in enumerate(MIGRATIONS[version:], start=version + 1):
-            await self._connection.executescript(script)
-            await self._connection.execute(f"PRAGMA user_version = {index}")
-            await self._connection.commit()
+            # One transaction per migration, so a failure leaves neither half its schema nor a bumped version.
+            try:
+                await self._connection.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {index};\nCOMMIT;")
+            except BaseException:
+                await self._connection.rollback()
+                raise
 
     async def close(self) -> None:
         await self._connection.close()
 
     async def execute(self, sql: str, params: SqlParams = ()) -> int:
         """Run one statement, commit, and return lastrowid."""
-        cursor = await self._connection.execute(sql, params)
-        await self._connection.commit()
-        return cursor.lastrowid or 0
+        async with self._writing:
+            cursor = await self._connection.execute(sql, params)
+            await self._connection.commit()
+            return cursor.lastrowid or 0
 
     async def execute_many(self, sql: str, rows: Iterable[SqlParams]) -> None:
-        await self._connection.executemany(sql, rows)
-        await self._connection.commit()
+        async with self._writing:
+            await self._connection.executemany(sql, rows)
+            await self._connection.commit()
 
     async def fetch_all(self, sql: str, params: SqlParams = ()) -> list[sqlite3.Row]:
         async with self._connection.execute(sql, params) as cursor:
@@ -213,19 +227,23 @@ class Database:
     # --- backup ---
 
     async def backup_to(self, destination: Path) -> None:
-        """Write a consistent online snapshot of the database to `destination`."""
+        """Write a consistent online snapshot of the database to `destination`, which must not exist yet.
+
+        `VACUUM INTO` runs on the dashboard's own connection between writes, so
+        it never meets a transaction still waiting for its commit.
+        """
+        if destination.exists():
+            raise FileExistsError(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        target = await aiosqlite.connect(destination)
-        try:
-            await self._connection.backup(target)
-        finally:
-            await target.close()
+        async with self._writing:
+            await self._connection.execute("VACUUM INTO ?", (str(destination),))
 
     async def restore_from(self, source: Path) -> None:
-        """Replace the live database's content with a snapshot, in place."""
-        snapshot = await aiosqlite.connect(source)
-        try:
-            await snapshot.backup(self._connection)
-        finally:
-            await snapshot.close()
-        await self._migrate()
+        """Replace the live database's content with a snapshot, in place, between writes."""
+        async with self._writing:
+            snapshot = await aiosqlite.connect(source)
+            try:
+                await snapshot.backup(self._connection)
+            finally:
+                await snapshot.close()
+            await self._migrate()

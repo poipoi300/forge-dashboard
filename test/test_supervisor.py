@@ -1,13 +1,16 @@
 """Supervisor lifecycle: restart policy, user stops, builds, dependencies, ports, readiness."""
 
 import asyncio
+import logging
 import socket
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
 
+import psutil
 import pytest
 
+from forge_dashboard.process import ports, tree
 from forge_dashboard.supervisor import policy
 from forge_dashboard.supervisor.core import (
     LOG_LINES_KEPT,
@@ -15,6 +18,7 @@ from forge_dashboard.supervisor.core import (
     LaunchPlan,
     PortRequest,
     PreStep,
+    ProcessHandle,
     Readiness,
     ServiceSpec,
     Supervisor,
@@ -289,3 +293,313 @@ async def test_log_cursor_keeps_reading_after_the_ring_buffer_fills(tmp_path: Pa
     assert first == cursor - LOG_LINES_KEPT
     assert lines[-1] == f"line {count - 1}"
     assert (newer, unchanged) == ([], cursor)
+
+
+# --- a failure inside supervision never strands a service ---
+
+
+async def test_a_missing_working_directory_fails_the_service_and_start_works_again(tmp_path: Path) -> None:
+    cwd = tmp_path / "not-created-yet"
+    events: list[SupervisorEvent] = []
+    spec = _spec("lost", [PY, "-c", "import time; time.sleep(60)"], cwd)
+    supervisor = Supervisor([spec], log_tag="runner", on_event=events.append)
+    await supervisor.start("lost")
+    await _settle(supervisor, "lost", {ServiceState.FAILED})
+    assert f"cannot start {PY!r} in {cwd}" in supervisor.status("lost").detail
+    assert events[-1].kind is SupervisorEventKind.FAILED
+    assert any(line.startswith("[runner] cannot start") for line in supervisor.log_lines("lost"))
+
+    cwd.mkdir()
+    await supervisor.start("lost")
+    await _settle(supervisor, "lost", {ServiceState.RUNNING})
+    await supervisor.stop("lost")
+
+
+async def test_a_missing_working_directory_fails_a_pre_step_without_retrying(tmp_path: Path) -> None:
+    step = PreStep(label="install", argv=(PY, "-c", "print(1)"), cwd=tmp_path / "gone")
+    supervisor = Supervisor([_spec("built", [PY, "-c", "print(2)"], tmp_path, pre_steps=(step,))])
+    await supervisor.start("built")
+    await _settle(supervisor, "built", {ServiceState.FAILED})
+    assert "cannot run" in supervisor.status("built").detail
+    assert len(supervisor.services["built"].build_failures) == 0
+
+
+async def test_an_unexpected_error_while_supervising_fails_the_service_and_start_works_again(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    attempts: list[int] = []
+
+    def plan(endpoint: Endpoint, providers: Mapping[str, Endpoint]) -> LaunchPlan:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ValueError("cannot render the command")
+        return LaunchPlan(argv=(PY, "-c", "import time; time.sleep(60)"), cwd=tmp_path, env={})
+
+    events: list[SupervisorEvent] = []
+    supervisor = Supervisor([_spec("fragile", [], tmp_path, plan=plan)], log_tag="runner", on_event=events.append)
+    with caplog.at_level(logging.ERROR, logger="forge_dashboard.supervisor"):
+        await supervisor.start("fragile")
+        await _settle(supervisor, "fragile", {ServiceState.FAILED})
+    assert supervisor.status("fragile").detail == "ValueError: cannot render the command"
+    assert "[runner] unexpected error: ValueError: cannot render the command" in supervisor.log_lines("fragile")
+    assert [event.kind for event in events] == [SupervisorEventKind.FAILED]
+    assert "supervising fragile failed" in caplog.text
+
+    await supervisor.start("fragile")
+    await _settle(supervisor, "fragile", {ServiceState.RUNNING})
+    await supervisor.stop("fragile")
+
+
+async def test_a_dependency_missing_from_the_registry_fails_the_dependent(tmp_path: Path) -> None:
+    orphan = _spec("orphan", [PY, "-c", "print(1)"], tmp_path, depends_on=("ghost",))
+    supervisor = Supervisor([orphan])
+    await supervisor.start("orphan")
+    await _settle(supervisor, "orphan", {ServiceState.FAILED})
+    assert supervisor.status("orphan").detail == "KeyError: 'ghost'"
+
+
+async def test_an_error_after_the_child_spawned_does_not_leave_it_running(tmp_path: Path) -> None:
+    spawned: list[tree.OwnedProcess] = []
+
+    async def spawn(argv: tuple[str, ...], cwd: Path, env: Mapping[str, str] | None = None) -> ProcessHandle:
+        process = await tree.spawn(argv, cwd, env)
+        spawned.append(process)
+        return process
+
+    raised = False
+
+    def on_line(service: str, line: str) -> None:
+        nonlocal raised
+        if "started pid" in line and not raised:
+            raised = True
+            raise RuntimeError("the line sink broke")
+
+    spec = _spec("sleeper", [PY, "-c", "import time; time.sleep(60)"], tmp_path)
+    supervisor = Supervisor([spec], spawn=spawn, on_line=on_line)
+    await supervisor.start("sleeper")
+    await _settle(supervisor, "sleeper", {ServiceState.FAILED})
+    assert supervisor.status("sleeper").detail == "RuntimeError: the line sink broke"
+    assert not spawned[0].is_alive()
+
+
+# --- stopping many services reports the ones that would not stop ---
+
+
+class StuckProcess:
+    """A child that never exits by itself; `stop` does whatever the test says."""
+
+    pid = 2_000_000_000
+
+    def __init__(self, stop: Callable[[], Awaitable[None]]) -> None:
+        self._stop = stop
+        self._exited = asyncio.Event()
+
+    def is_alive(self) -> bool:
+        return not self._exited.is_set()
+
+    def tree_pids(self) -> set[int]:
+        return set()
+
+    async def lines(self) -> AsyncIterator[str]:
+        await self._exited.wait()
+        remaining: list[str] = []
+        for line in remaining:
+            yield line
+
+    async def wait(self) -> int:
+        await self._exited.wait()
+        return 0
+
+    async def stop(self, grace_s: float = 0.0, on_stage: Callable[[str], None] | None = None) -> None:
+        await self._stop()
+
+
+def _supervisor_with_a_stuck_service(
+    tmp_path: Path, stop: Callable[[], Awaitable[None]], on_event: Callable[[SupervisorEvent], None] | None = None
+) -> Supervisor:
+    async def spawn(argv: tuple[str, ...], cwd: Path, env: Mapping[str, str] | None = None) -> ProcessHandle:
+        if argv[0] == "stuck":
+            return StuckProcess(stop)
+        return await tree.spawn(argv, cwd, env)
+
+    specs = [
+        _spec("stuck", ["stuck"], tmp_path),
+        _spec("healthy", [PY, "-c", "import time; time.sleep(60)"], tmp_path),
+    ]
+    return Supervisor(specs, spawn=spawn, log_tag="runner", on_event=on_event)
+
+
+async def test_stop_all_reports_a_service_that_fails_to_stop_and_stops_the_rest(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def explode() -> None:
+        raise RuntimeError("the tree is stuck")
+
+    events: list[SupervisorEvent] = []
+    supervisor = _supervisor_with_a_stuck_service(tmp_path, explode, events.append)
+    await supervisor.start_all()
+    for name in ("stuck", "healthy"):
+        await _settle(supervisor, name, {ServiceState.RUNNING})
+
+    with caplog.at_level(logging.ERROR, logger="forge_dashboard.supervisor"):
+        failed = await supervisor.stop_all()
+
+    assert failed == ["stuck"]
+    assert supervisor.status("healthy").state is ServiceState.STOPPED
+    status = supervisor.status("stuck")
+    assert status.state is ServiceState.FAILED and status.detail == "stop failed: RuntimeError: the tree is stuck"
+    assert "[runner] stop failed: RuntimeError: the tree is stuck" in supervisor.log_lines("stuck")
+    assert any(event.service == "stuck" and event.kind is SupervisorEventKind.FAILED for event in events)
+    assert "stuck could not be stopped" in caplog.text
+
+
+async def test_stop_all_reports_a_service_still_stopping_when_the_timeout_ends(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def never_finishes() -> None:
+        await asyncio.sleep(3600)
+
+    supervisor = _supervisor_with_a_stuck_service(tmp_path, never_finishes)
+    await supervisor.start_all()
+    for name in ("stuck", "healthy"):
+        await _settle(supervisor, name, {ServiceState.RUNNING})
+
+    with caplog.at_level(logging.ERROR, logger="forge_dashboard.supervisor"):
+        failed = await supervisor.stop_all(timeout_s=1)
+
+    assert failed == ["stuck"]
+    assert supervisor.status("healthy").state is ServiceState.STOPPED
+    assert "[runner] stop timed out: still stopping after 1s" in supervisor.log_lines("stuck")
+    assert supervisor.status("stuck").state is ServiceState.FAILED
+    assert "still stopping after 1s" in caplog.text
+
+
+async def test_stop_all_of_healthy_services_reports_nothing_failed(tmp_path: Path) -> None:
+    supervisor = Supervisor([_spec("sleeper", [PY, "-c", "import time; time.sleep(60)"], tmp_path)])
+    await supervisor.start("sleeper")
+    await _settle(supervisor, "sleeper", {ServiceState.RUNNING})
+    assert await supervisor.stop_all() == []
+
+
+# --- a pinned port is only ever freed from a process we can prove is ours ---
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
+async def _foreign_listener(cwd: Path, port: int) -> asyncio.subprocess.Process:
+    """A process of the same project that the supervisor never started (a developer's own dev server)."""
+    process = await asyncio.create_subprocess_exec(
+        PY, "-c", LISTENER, str(port), cwd=cwd, stdout=asyncio.subprocess.PIPE
+    )
+    assert process.stdout is not None
+    await process.stdout.readline()
+    return process
+
+
+def _pinned_spec(tmp_path: Path, port: int) -> ServiceSpec:
+    return _spec(
+        "pinned",
+        [PY, "-c", LISTENER, "{port}"],
+        tmp_path,
+        port=PortRequest(policy="pinned", pinned=port, evidence="test"),
+    )
+
+
+async def _kill(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        process.kill()
+    await process.wait()
+
+
+async def test_a_listener_of_the_same_project_that_we_did_not_spawn_blocks_the_start_and_survives(
+    tmp_path: Path,
+) -> None:
+    port = _free_port()
+    foreign = await _foreign_listener(tmp_path, port)
+    try:
+        supervisor = Supervisor([_pinned_spec(tmp_path, port)])
+        await supervisor.start("pinned")
+        await _settle(supervisor, "pinned", {ServiceState.BLOCKED})
+        blocked_by = supervisor.status("pinned").blocked_by
+        assert blocked_by is not None and blocked_by.port == port
+        assert psutil.Process(blocked_by.pid).is_running()
+        assert foreign.returncode is None
+
+        await supervisor.release_and_start("pinned")
+        await _settle(supervisor, "pinned", {ServiceState.RUNNING})
+        await asyncio.wait_for(foreign.wait(), 10)
+        await supervisor.stop("pinned")
+    finally:
+        await _kill(foreign)
+
+
+async def test_a_restart_does_not_kill_a_listener_we_did_not_spawn_either(tmp_path: Path) -> None:
+    port = _free_port()
+    supervisor = Supervisor([_pinned_spec(tmp_path, port)])
+    await supervisor.start("pinned")
+    await _settle(supervisor, "pinned", {ServiceState.RUNNING})
+    await supervisor.stop("pinned")
+    foreign = await _foreign_listener(tmp_path, port)
+    try:
+        await supervisor.restart("pinned")
+        await _settle(supervisor, "pinned", {ServiceState.BLOCKED})
+        assert foreign.returncode is None
+    finally:
+        await _kill(foreign)
+
+
+async def test_a_leftover_recorded_as_spawned_by_us_is_reclaimed_on_start(tmp_path: Path) -> None:
+    port = _free_port()
+    leftover = await _foreign_listener(tmp_path, port)
+    try:
+        supervisor = Supervisor([_pinned_spec(tmp_path, port)])
+        [holder] = ports.holders([port])
+        supervisor.services["pinned"].spawned[holder.pid] = holder.create_time
+        await supervisor.start("pinned")
+        await _settle(supervisor, "pinned", {ServiceState.RUNNING})
+        assert any("reclaiming our leftover" in line for line in supervisor.log_lines("pinned"))
+        await asyncio.wait_for(leftover.wait(), 10)
+        await supervisor.stop("pinned")
+    finally:
+        await _kill(leftover)
+
+
+async def test_a_reused_pid_is_not_mistaken_for_our_leftover(tmp_path: Path) -> None:
+    port = _free_port()
+    stranger = await _foreign_listener(tmp_path, port)
+    try:
+        supervisor = Supervisor([_pinned_spec(tmp_path, port)])
+        [holder] = ports.holders([port])
+        supervisor.services["pinned"].spawned[holder.pid] = holder.create_time - 100.0  # an older process, same pid
+        await supervisor.start("pinned")
+        await _settle(supervisor, "pinned", {ServiceState.BLOCKED})
+        assert stranger.returncode is None
+    finally:
+        await _kill(stranger)
+
+
+async def test_the_processes_of_a_running_service_are_remembered_as_ours(tmp_path: Path) -> None:
+    supervisor = Supervisor([_spec("sleeper", [PY, "-c", "import time; time.sleep(60)"], tmp_path)])
+    await supervisor.start("sleeper")
+    await _settle(supervisor, "sleeper", {ServiceState.RUNNING})
+    service = supervisor.services["sleeper"]
+    assert service.handle is not None
+    root = service.handle.pid
+    assert service.spawned[root] == psutil.Process(root).create_time()
+    await supervisor.stop("sleeper")
+
+
+async def test_a_running_service_cannot_be_removed_but_a_stopped_one_can(tmp_path: Path) -> None:
+    supervisor = Supervisor([_spec("sleeper", [PY, "-c", "import time; time.sleep(60)"], tmp_path)])
+    await supervisor.start("sleeper")
+    await _settle(supervisor, "sleeper", {ServiceState.RUNNING})
+    with pytest.raises(RuntimeError, match="stop it before removing"):
+        supervisor.remove("sleeper")
+    await supervisor.stop("sleeper")
+    supervisor.remove("sleeper")
+    assert supervisor.snapshot() == []

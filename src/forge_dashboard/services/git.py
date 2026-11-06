@@ -20,10 +20,11 @@ from pydantic import BaseModel, Field
 from forge_dashboard import gitops
 from forge_dashboard.core.events import Event
 from forge_dashboard.core.service import ActionError, Done, JobRef, ProjectRef, Service, action
-from forge_dashboard.core.tasks import BackgroundTasks
+from forge_dashboard.core.tasks import BackgroundTasks, repeat
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain import gitparse
 from forge_dashboard.domain.summary import GitFacts
+from forge_dashboard.github.remote import parse_github_slug
 from forge_dashboard.services.discovery import ChangeKind
 from forge_dashboard.services.jobs import JobContext, JobOutcome, JobsService, JobStatus
 from forge_dashboard.services.projects import ProjectListener, ProjectRecord, ProjectsService
@@ -238,7 +239,9 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
 
     @override
     async def start(self) -> None:
-        self._poll_task = asyncio.create_task(self._poll(), name="git-poll")
+        self._poll_task = asyncio.create_task(
+            repeat(self._refresh_all, lambda: self.config.poll_s, label="git poll refresh"), name="git-poll"
+        )
 
     @override
     async def stop(self) -> None:
@@ -250,12 +253,10 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
                 await self._poll_task
         await self._background.cancel_all()
 
-    async def _poll(self) -> None:
-        while True:
-            await asyncio.sleep(self.config.poll_s)
-            for record in self._projects.records():
-                if record.is_git:
-                    await self.refresh(record)
+    async def _refresh_all(self) -> None:
+        for record in self._projects.records():
+            if record.is_git:
+                await self.refresh(record)
 
     # --- registry hooks ---
 
@@ -373,7 +374,7 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
             last_commit_at=state.last_commit_at,
             last_worktree_change_at=state.last_worktree_change_at,
             origin_url=origin,
-            github_repo=gitparse.github_slug(origin) if origin else None,
+            github_repo=parse_github_slug(origin) if origin else None,
             has_upstream_remote="upstream" in state.remotes,
         )
 
@@ -412,7 +413,8 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
         """A unified diff of the working tree, the index, one commit, or one file."""
         record = self._git_record(request.project_id)
         if request.commit is not None:
-            return Diff(diff=await gitops.diff(record.path, f"{request.commit}^!", "--"))
+            commit = await gitops.verified_commit(record.path, request.commit)
+            return Diff(diff=await gitops.diff(record.path, f"{commit}^!", "--"))
         if request.path is not None:
             status = await gitops.status(record.path)
             untracked = any(entry.path == request.path and entry.kind == "untracked" for entry in status.entries)
@@ -547,19 +549,23 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
         branch = request.branch or current.head
         if branch is None:
             raise ActionError("detached HEAD: name the branch to push", status=409)
+        remote = await gitops.require_remote(record.path, request.remote)
+        await gitops.require_local_branch(record.path, branch)
         upstream = ["-u"] if branch == current.head and current.upstream is None else []
         return await self._write_job(
-            record, "push", f"git push {request.remote} {branch}", ["push", *upstream, request.remote, branch]
+            record, "push", f"git push {remote} {branch}", ["push", *upstream, "--", remote, branch]
         )
 
     @action(title="Create branch")
     async def create_branch(self, request: BranchInput) -> Done:
         """Create a branch (optionally switching to it)."""
         record = self._git_record(request.project_id)
-        start = [request.start_point] if request.start_point else []
+        # The name and start point come from the request; git must never read either as an option.
         if request.switch:
-            await gitops.run(record.path, "switch", "-c", request.name, *start)
+            switch_start = ["--end-of-options", request.start_point] if request.start_point else []
+            await gitops.run(record.path, "switch", "-c", request.name, *switch_start)
         else:
-            await gitops.run(record.path, "branch", request.name, *start)
+            branch_start = [request.start_point] if request.start_point else []
+            await gitops.run(record.path, "branch", "--end-of-options", request.name, *branch_start)
         await self.refresh(record)
         return Done(message=f"created {request.name}")

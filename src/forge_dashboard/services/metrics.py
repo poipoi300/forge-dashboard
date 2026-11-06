@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from forge_dashboard.core.events import Event, Severity
 from forge_dashboard.core.service import ActionError, ProjectRef, Service, action
+from forge_dashboard.core.tasks import repeat
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain.commands import render_command
 from forge_dashboard.domain.summary import MetricsFacts, PinnedMetric
@@ -177,10 +178,20 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
         projects.listen(self)
 
     @override
+    async def start(self) -> None:
+        # Runtime.start finds no projects yet (discovery starts last); a restart finds them all, with the
+        # database possibly replaced underneath.
+        self._limit = asyncio.Semaphore(self.config.concurrency)
+        for record in self._projects.records():
+            await self.project_upserted(record)
+
+    @override
     async def stop(self) -> None:
-        for task in self._loops.values():
+        loops = list(self._loops.values())
+        self._loops.clear()
+        for task in loops:
             task.cancel()
-        for task in self._loops.values():
+        for task in loops:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
@@ -232,11 +243,13 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
 
     async def _loop(self, record: ProjectRecord, metric: Metric) -> None:
         latest = self._latest[record.id].get(metric.id)
-        if latest is not None and latest.read_at is not None:
-            await asyncio.sleep(max(0.0, latest.read_at + metric.interval_s - time.time()))
-        while True:
-            await self.read(record, metric)
-            await asyncio.sleep(metric.interval_s)
+        wait_s = max(0.0, latest.read_at + metric.interval_s - time.time()) if latest and latest.read_at else 0.0
+        await repeat(
+            lambda: self.read(record, metric),
+            lambda: metric.interval_s,
+            label=f"metric {record.id}:{metric.id}",
+            first_run_after_s=wait_s,
+        )
 
     # --- reading ---
 
@@ -299,6 +312,8 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
                 )
             except tree.ExecutableNotFoundError as error:
                 raise MetricError(str(error)) from error
+            except OSError as error:
+                raise MetricError(f"cannot run {command.argv[0]!r} in {command.cwd}: {error}") from error
             if result.timed_out:
                 raise MetricError(f"timed out after {source.timeout_s}s")
             if not result.ok:
@@ -321,7 +336,11 @@ class MetricsService(Service[MetricsConfig, MetricsState], ProjectListener):
         path = record.path / source.path
         if not path.is_file():
             raise MetricError(f"{source.path} does not exist")
-        return _parse_reading(path.read_text(encoding="utf-8"))
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise MetricError(f"cannot read {source.path}: {error}") from error
+        return _parse_reading(text)
 
     async def _load_latest(self, project_id: str, metric: Metric) -> LatestReading:
         row = await self.runtime.db.fetch_one(

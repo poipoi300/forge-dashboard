@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from forge_dashboard.core.ui import ui
-from forge_dashboard.domain.gitparse import Commit
+from forge_dashboard.domain.gitparse import Commit, has_embedded_credentials
 from forge_dashboard.domain.scheduling import ManualSchedule, Schedule
 
 CONFLICT_MARKER = re.compile(r"^(<<<<<<<|=======|>>>>>>>)( |$)", re.MULTILINE)
@@ -103,6 +103,18 @@ class ForkPolicy(BaseModel):
         default_factory=_default_notify,
         json_schema_extra=ui(widget="multiselect", group="Notifications"),
     )
+
+    @field_validator("upstream_url")
+    @classmethod
+    def _plain_url(cls, value: str | None) -> str | None:
+        """The URL is stored, shown, and passed to git: no option, and no secret that would be published with it."""
+        if value is None:
+            return value
+        if value.startswith("-"):
+            raise ValueError("an upstream URL cannot start with '-'")
+        if has_embedded_credentials(value):
+            raise ValueError("an upstream URL cannot embed credentials; use a git credential helper or SSH keys")
+        return value
 
 
 class ForkRunState(StrEnum):

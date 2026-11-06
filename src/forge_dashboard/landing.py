@@ -6,9 +6,9 @@ update runs there as `git merge --ff-only`, so the checkout follows. When that
 checkout has local changes, nothing is touched: the caller parks the work as
 ready to apply.
 
-Rebased fork syncs replace history by design; for them (`rewrite=True`) the
-clean-checkout path uses `git reset --keep`, which refuses to lose local
-changes, and the ref update still checks the old value.
+Rebased fork syncs replace history by design (`rewrite=True`). A rewrite never
+lands into a checked-out branch, clean or not: moving it would reset the
+user's working tree, so it waits until the branch is checked out nowhere.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Literal
 
 from forge_dashboard import gitops
 
-LandingOutcome = Literal["updated", "dirty", "not-fast-forward", "missing-branch"]
+LandingOutcome = Literal["updated", "dirty", "checked-out", "refused", "not-fast-forward", "missing-branch"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,8 @@ class Landing:
     outcome: LandingOutcome
     checkout: Path | None
     previous_sha: str | None
+    detail: str | None = None
+    """Git's own message when it refused the update (outcome `refused`)."""
 
 
 async def checkout_of(repo: Path, branch: str) -> Path | None:
@@ -38,7 +40,7 @@ async def checkout_of(repo: Path, branch: str) -> Path | None:
 
 
 async def land(repo: Path, branch: str, new_sha: str, *, rewrite: bool = False) -> Landing:
-    """Move `branch` to `new_sha` without ever touching a dirty checkout."""
+    """Move `branch` to `new_sha` without ever touching a dirty checkout or resetting a clean one."""
     old = (await gitops.run(repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}", check=False)).stdout.strip()
     if not old:
         return Landing("missing-branch", None, None)
@@ -46,15 +48,18 @@ async def land(repo: Path, branch: str, new_sha: str, *, rewrite: bool = False) 
         return Landing("not-fast-forward", None, old)
     checkout = await checkout_of(repo, branch)
     if checkout is None:
-        await gitops.run(repo, "update-ref", f"refs/heads/{branch}", new_sha, old)
+        updated = await gitops.run(repo, "update-ref", f"refs/heads/{branch}", new_sha, old, check=False)
+        if not updated.ok:
+            return Landing("refused", None, old, gitops.failure_reason(updated))
         return Landing("updated", None, old)
+    if rewrite:
+        return Landing("checked-out", checkout, old)
     status = await gitops.status(checkout)
     # Untracked files do not make a checkout dirty here: git itself refuses a
     # fast-forward that would overwrite one, and that refusal parks the work.
     if any(entry.kind != "untracked" for entry in status.entries):
         return Landing("dirty", checkout, old)
-    command = ("reset", "--keep", new_sha) if rewrite else ("merge", "--ff-only", new_sha)
-    result = await gitops.run(checkout, *command, check=False)
-    if not result.ok:
-        return Landing("dirty", checkout, old)
+    merged = await gitops.run(checkout, "merge", "--ff-only", new_sha, check=False)
+    if not merged.ok:
+        return Landing("refused", checkout, old, gitops.failure_reason(merged))
     return Landing("updated", checkout, old)

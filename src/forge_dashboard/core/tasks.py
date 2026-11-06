@@ -37,11 +37,33 @@ class BackgroundTasks:
                 await task
 
 
-async def repeat(action: Callable[[], Awaitable[None]], period_s: Callable[[], float], *, label: str) -> None:
-    """Run `action` every `period_s()` seconds forever; a failed run is logged and retried next period."""
+async def repeat(
+    action: Callable[[], Awaitable[object]],
+    period_s: Callable[[], float],
+    *,
+    label: str,
+    first_run_after_s: float = 0.0,
+    wake: asyncio.Event | None = None,
+) -> None:
+    """Run `action` every `period_s()` seconds forever; a failed run is logged and retried next period.
+
+    Args:
+        action: One iteration. Its result is ignored.
+        period_s: Seconds to wait after each run, read afresh every time so a changed config applies at once.
+        label: Names the loop in the log line of a failed run.
+        first_run_after_s: Seconds to wait before the first run.
+        wake: When set, ends the current wait early; the event is cleared as the next run starts.
+    """
+    if first_run_after_s > 0:
+        await asyncio.sleep(first_run_after_s)
     while True:
         try:
             await action()
-        except Exception:  # one failed sample must not end a periodic loop
+        except Exception:  # one failed iteration must not end a loop that runs for the life of the process
             _log.exception("%s failed", label)
-        await asyncio.sleep(period_s())
+        if wake is None:
+            await asyncio.sleep(period_s())
+            continue
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(wake.wait(), timeout=period_s())
+        wake.clear()

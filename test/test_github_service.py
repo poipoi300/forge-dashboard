@@ -814,6 +814,57 @@ async def test_the_poll_loop_polls_new_projects_at_once_and_wakes_on_refresh(
         await harness.github.stop()
 
 
+async def test_requests_work_after_the_service_is_stopped_and_started_again(
+    harness: Harness, hello: ProjectRecord, router: respx.MockRouter
+) -> None:
+    routes = mock_repository(router)
+    await harness.github.start()
+    try:
+        await wait_for(lambda: harness.published(IssueFacts) != [])
+    finally:
+        await harness.github.stop()
+    polls_before = routes["repo"].call_count
+
+    await harness.github.start()  # what a restore does after replacing the database
+    try:
+        info = await harness.github.repo(ProjectRef(project_id="hello"))
+        assert info.repo == SLUG
+        assert routes["repo"].call_count == polls_before + 1
+        await harness.github.refresh_now(ProjectRef(project_id="hello"))
+        await wait_for(lambda: routes["repo"].call_count == polls_before + 2)  # the action, then the poll it woke
+    finally:
+        await harness.github.stop()
+    assert harness.auth.calls == 2  # each run built its own client and resolved the credential for it
+
+
+async def test_the_poll_loop_survives_a_round_that_raises(
+    harness: Harness,
+    hello: ProjectRecord,
+    router: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_repository(router)
+    original = harness.github.poll_due
+    rounds: list[int] = []
+
+    async def flaky() -> list[str]:
+        rounds.append(len(rounds))
+        if len(rounds) == 1:
+            raise RuntimeError("the round broke")
+        return await original()
+
+    monkeypatch.setattr(harness.github, "poll_due", flaky)
+    await harness.github.start()
+    try:
+        await wait_for(lambda: rounds != [])
+        await harness.github.refresh_now(ProjectRef(project_id="hello"))  # wakes the loop for its next round
+        await wait_for(lambda: harness.published(IssueFacts) != [])
+    finally:
+        await harness.github.stop()
+    assert "GitHub poll failed" in caplog.text
+
+
 async def test_changing_the_config_applies_the_reserve_and_polls_again(
     harness: Harness, hello: ProjectRecord, router: respx.MockRouter
 ) -> None:
@@ -1716,7 +1767,7 @@ def test_the_service_is_served_over_http_with_typed_models(
     path = make_project("Hello", manifest=None)
     git(path, "remote", "add", "origin", f"{REPO_URL}.git")
     record = ProjectRecord("hello", path, "managed", None, (), False, True)
-    with TestClient(create_app(runtime)) as client:
+    with TestClient(create_app(runtime), base_url="http://127.0.0.1") as client:
         assert client.portal is not None
         client.portal.call(service.project_upserted, record)
         descriptor = {d["id"]: d for d in client.get("/api/services").json()}["github"]

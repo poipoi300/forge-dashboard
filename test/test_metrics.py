@@ -1,5 +1,7 @@
 """Project metrics: sources, thresholds, failures, history, and pinned facts."""
 
+import asyncio
+import contextlib
 import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -14,7 +16,7 @@ from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import ActionError, ProjectRef
 from forge_dashboard.manifest import MetricReading
-from forge_dashboard.manifest.models import MetricThresholds
+from forge_dashboard.manifest.models import Metric, MetricThresholds
 from forge_dashboard.services.discovery import DiscoveryService, PathInput
 from forge_dashboard.services.jobs import JobsService
 from forge_dashboard.services.manifests import ManifestsService
@@ -26,7 +28,7 @@ from forge_dashboard.services.metrics import (
     RefreshInput,
     apply_thresholds,
 )
-from forge_dashboard.services.projects import ProjectsService
+from forge_dashboard.services.projects import ProjectRecord, ProjectsService
 
 PYTHON = sys.executable.replace(chr(92), "/")
 METRIC_SCRIPT = {"scripts/metric_files.py": 'import json\nprint(json.dumps({"value": 3}))\n'}
@@ -208,3 +210,104 @@ async def test_interval_overrides_for_unknown_metrics_are_refused(
         await metrics.set_intervals(
             IntervalsInput(project_id="alpha", overrides=[IntervalOverride(metric_id="ghost", interval_s=60)])
         )
+
+
+# --- loops survive failures and restarts ---
+
+LOST_COMMAND = f"""
+[[metrics]]
+id = "lost"
+label = "Lost"
+source = {{ kind = "command", argv = ["{PYTHON}", "-c", "print(1)"], cwd = "no-such-directory" }}
+"""
+
+ProjectEnv = tuple[MetricsService, ProjectsService, DiscoveryService, dict[str, str]]
+
+
+async def test_a_command_that_cannot_start_is_shown_with_its_metric(
+    metrics_env: ProjectEnv, make_project: Callable[..., Path]
+) -> None:
+    metrics, _projects, discovery, _urls = metrics_env
+    alpha = make_project("Alpha", manifest=MANIFEST + LOST_COMMAND)
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: any(p.project_id == "alpha" for p in metrics.state.projects))
+
+    refreshed = await metrics.refresh(RefreshInput(project_id="alpha", metric_id="lost"))
+
+    [lost] = refreshed.metrics
+    assert lost.value is None and "cannot run" in (lost.error or "")
+
+
+async def test_an_unreadable_metric_file_is_shown_with_its_metric(
+    metrics_env: ProjectEnv, make_project: Callable[..., Path]
+) -> None:
+    metrics, _projects, discovery, _urls = metrics_env
+    alpha = make_project("Alpha", manifest=MANIFEST + METRICS, extra={"reports/metric.json": ""})
+    (alpha / "reports" / "metric.json").write_bytes(b"\xff\xfe not utf-8 \x80")
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: any(p.project_id == "alpha" for p in metrics.state.projects))
+
+    refreshed = await metrics.refresh(RefreshInput(project_id="alpha", metric_id="report"))
+
+    report = next(reading for reading in refreshed.metrics if reading.metric_id == "report")
+    assert report.value is None and "cannot read reports/metric.json" in (report.error or "")
+
+
+async def test_a_reading_that_raises_unexpectedly_does_not_end_the_interval_loop(
+    metrics_env: ProjectEnv,
+    make_project: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    metrics, projects, discovery, _urls = metrics_env
+    alpha = make_project("Alpha", manifest=MANIFEST + METRICS, extra=METRIC_SCRIPT)
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: any(p.project_id == "alpha" for p in metrics.state.projects))
+    record = projects.record("alpha")
+    assert record.manifest is not None
+    files = next(metric for metric in record.manifest.metrics if metric.id == "files")
+    quick = files.model_copy(update={"interval_s": 0.05})
+    takes: list[int] = []
+
+    async def take(record: ProjectRecord, metric: Metric) -> MetricReading:
+        takes.append(len(takes))
+        if len(takes) == 1:
+            raise RuntimeError("the disk is on fire")
+        return MetricReading(value=len(takes))
+
+    monkeypatch.setattr(metrics, "_take", take)
+    loop = asyncio.create_task(metrics._loop(record, quick))
+    try:
+        await wait_for(lambda: len(takes) >= 3)
+    finally:
+        loop.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop
+    assert "metric alpha:files failed" in caplog.text
+
+
+async def test_metrics_read_again_after_a_stop_and_start_that_replaced_the_database(
+    metrics_env: ProjectEnv, make_project: Callable[..., Path]
+) -> None:
+    metrics, _projects, discovery, _urls = metrics_env
+    alpha = make_project("Alpha", manifest=MANIFEST + METRICS, extra=METRIC_SCRIPT)
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: any(p.project_id == "alpha" for p in metrics.state.projects))
+
+    def files_read() -> bool:
+        return any(
+            reading.read_at is not None
+            for project in metrics.state.projects
+            for reading in project.metrics
+            if reading.metric_id == "files"
+        )
+
+    await wait_for(files_read)
+    await metrics.stop()
+    await metrics.runtime.db.execute("DELETE FROM metric_readings")  # as if a restore had swapped the database
+    await metrics.start()
+
+    assert not files_read()  # reloaded from the new database, which has no readings yet
+    await wait_for(files_read)  # the loops were recreated and read again
+    history = await metrics.history(HistoryInput(project_id="alpha", metric_id="files"))
+    assert history.points and all(point.value == 3 for point in history.points)

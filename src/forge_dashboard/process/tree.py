@@ -89,15 +89,29 @@ class OwnedProcess:
 
     def tree_pids(self) -> set[int]:
         """PIDs of the child and every live descendant, including orphaned grandchildren on Windows."""
-        pids: set[int] = set()
+        return set(self._tree_processes())
+
+    def _tree_processes(self) -> dict[int, psutil.Process]:
+        """The child and every live descendant, by pid.
+
+        A `psutil.Process` captured here keeps the creation time it saw, so it
+        goes on naming that process after the OS reuses its pid; acting on a
+        bare pid later could hit a stranger.
+        """
+        processes: dict[int, psutil.Process] = {}
+        job_pids: set[int] = set()
         if sys.platform == "win32" and isinstance(self._job, JobObject):
             with contextlib.suppress(OSError, RuntimeError):
-                pids |= self._job.pids()
+                job_pids = self._job.pids()
         with contextlib.suppress(psutil.Error):
             root = psutil.Process(self.pid)
-            pids.add(root.pid)
-            pids |= {child.pid for child in root.children(recursive=True)}
-        return pids
+            processes[root.pid] = root
+            for child in root.children(recursive=True):
+                processes[child.pid] = child
+        for pid in job_pids - processes.keys():
+            with contextlib.suppress(psutil.Error):
+                processes[pid] = psutil.Process(pid)
+        return processes
 
     async def lines(self) -> AsyncIterator[str]:
         """Yield merged output lines until the child closes its stream; ANSI colours are kept."""
@@ -116,17 +130,25 @@ class OwnedProcess:
         return code
 
     async def stop(self, grace_s: float = DEFAULT_GRACE_S, on_stage: StageReporter | None = None) -> None:
-        """Stop the tree: graceful signal, wait, re-enumerate, force-kill survivors."""
+        """Stop the tree: graceful signal, wait, re-enumerate, force-kill survivors.
+
+        Cancelling a stop (a shutdown deadline) still force-kills the tree
+        before the cancellation propagates, so no child outlives it.
+        """
         report = on_stage or (lambda _message: None)
-        known = self.tree_pids()
+        known = self._tree_processes()
         if not self._survivors(known) and not self._group_alive():
             self._release_job()
             return
-        if _send_graceful(self.pid):
-            report(f"sent a graceful stop signal; waiting up to {grace_s:.0f}s")
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self.process.wait(), timeout=grace_s)
-        known |= self.tree_pids()
+        try:
+            if _send_graceful(self.pid):
+                report(f"sent a graceful stop signal; waiting up to {grace_s:.0f}s")
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self.process.wait(), timeout=grace_s)
+        except asyncio.CancelledError:
+            await asyncio.shield(self._force_kill({**self._tree_processes(), **known}, grace_s))
+            raise
+        known = {**self._tree_processes(), **known}
         if not self._survivors(known) and not self._group_alive():
             report("stopped cleanly")
             self._release_job()
@@ -137,9 +159,9 @@ class OwnedProcess:
 
     async def kill(self) -> None:
         """Kill the tree immediately, without the graceful phase."""
-        await self._force_kill(self.tree_pids(), DEFAULT_GRACE_S)
+        await self._force_kill(self._tree_processes(), DEFAULT_GRACE_S)
 
-    async def _force_kill(self, known: set[int], grace_s: float) -> None:
+    async def _force_kill(self, known: Mapping[int, psutil.Process], grace_s: float) -> None:
         if sys.platform == "win32" and isinstance(self._job, JobObject):
             with contextlib.suppress(OSError, RuntimeError):
                 self._job.terminate()
@@ -171,11 +193,15 @@ class OwnedProcess:
             return False
         return True
 
-    def _survivors(self, known: set[int]) -> list[psutil.Process]:
-        alive: list[psutil.Process] = []
-        for pid in known | ({self.pid} if self.is_alive() else set()):
+    def _survivors(self, known: Mapping[int, psutil.Process]) -> list[psutil.Process]:
+        """The still-running members of `known`; a process whose pid was reused is not one."""
+        candidates = dict(known)
+        if self.is_alive() and self.pid not in candidates:
             with contextlib.suppress(psutil.Error):
-                process = psutil.Process(pid)
+                candidates[self.pid] = psutil.Process(self.pid)
+        alive: list[psutil.Process] = []
+        for process in candidates.values():
+            with contextlib.suppress(psutil.Error):
                 if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
                     alive.append(process)
         return alive

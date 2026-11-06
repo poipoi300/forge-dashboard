@@ -1,5 +1,6 @@
 """Git parsing against real git output, and the git service on fixture repos."""
 
+import dataclasses
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
@@ -13,10 +14,17 @@ from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import ActionError, ProjectRef
 from forge_dashboard.domain import gitparse
 from forge_dashboard.services.discovery import DiscoveryService, PathInput
-from forge_dashboard.services.git import BranchInput, CommitsInput, DiffInput, GitService, PushInput
+from forge_dashboard.services.git import (
+    BranchInput,
+    CommitsInput,
+    DiffInput,
+    GitService,
+    PushInput,
+    RepoState,
+)
 from forge_dashboard.services.jobs import JobsService, JobStatus
 from forge_dashboard.services.manifests import ManifestsService
-from forge_dashboard.services.projects import ProjectsService
+from forge_dashboard.services.projects import ProjectRecord, ProjectsService
 
 
 def test_status_v2_parses_branch_headers_and_every_entry_kind() -> None:
@@ -61,22 +69,6 @@ def test_merge_tree_output_lists_conflicted_files_once() -> None:
     assert not conflicted.clean
     assert conflicted.conflicted_files == ("shared.txt", "other.py")
     assert conflicted.messages == ("Auto-merging shared.txt",)
-
-
-@pytest.mark.parametrize(
-    ("url", "slug"),
-    [
-        ("https://github.com/octocat/Hello-World.git", "octocat/Hello-World"),
-        ("https://github.com/octocat/Hello-World", "octocat/Hello-World"),
-        ("https://user@github.com/o/r.git", "o/r"),
-        ("git@github.com:o/r.git", "o/r"),
-        ("ssh://git@github.com/o/r.git", "o/r"),
-        ("https://gitlab.com/o/r.git", None),
-        ("C:/repos/upstream.git", None),
-    ],
-)
-def test_github_slugs_are_parsed_from_every_remote_form(url: str, slug: str | None) -> None:
-    assert gitparse.github_slug(url) == slug
 
 
 def test_branch_tracking_states() -> None:
@@ -249,3 +241,263 @@ async def test_non_git_projects_are_refused(
     await discovery.add_project(PathInput(path=str(plain)))
     with pytest.raises(ActionError, match="not a git repository"):
         await service.changes(ProjectRef(project_id="plain"))
+
+
+# --- remotes never carry secrets out of the dashboard ---
+
+
+def test_remote_urls_lose_their_userinfo_wherever_git_reports_them() -> None:
+    raw = "\n".join(
+        [
+            "origin\thttps://me:s3cret@github.com/o/r.git (fetch)",
+            "origin\thttps://me:s3cret@github.com/o/r.git (push)",
+            "token\thttps://ghp_abc123@github.com/o/r.git (fetch)",
+            "pass@word\thttps://user:p@ss@host.example/o/r.git (fetch)",
+            "login\tssh://git@github.com/o/r.git (fetch)",
+            "scp\tgit@github.com:o/r.git (fetch)",
+            "local\tC:/repos/r.git (fetch)",
+        ]
+    )
+    assert gitparse.parse_remotes(raw) == {
+        "origin": "https://github.com/o/r.git",
+        "token": "https://github.com/o/r.git",
+        "pass@word": "https://host.example/o/r.git",
+        "login": "ssh://github.com/o/r.git",
+        "scp": "git@github.com:o/r.git",
+        "local": "C:/repos/r.git",
+    }
+    assert gitparse.redact_url("https://host.example/path@not-userinfo") == "https://host.example/path@not-userinfo"
+
+
+@pytest.mark.parametrize(
+    ("url", "embeds"),
+    [
+        ("https://me:s3cret@github.com/o/r.git", True),
+        ("https://ghp_abc123@github.com/o/r.git", True),
+        ("ssh://git:pw@host/o/r.git", True),
+        ("ssh://git@github.com/o/r.git", False),
+        ("git@github.com:o/r.git", False),
+        ("https://github.com/o/r.git", False),
+        ("C:/repos/r.git", False),
+    ],
+)
+def test_only_secrets_count_as_embedded_credentials(url: str, embeds: bool) -> None:
+    assert gitparse.has_embedded_credentials(url) is embeds
+
+
+async def test_a_remote_with_a_token_is_published_without_it(
+    git_service: tuple[GitService, ProjectsService, DiscoveryService, JobsService],
+    make_project: Callable[..., Path],
+    git: Git,
+) -> None:
+    service, projects, discovery, _jobs = git_service
+    alpha = make_project("Alpha")
+    git(alpha, "remote", "add", "origin", "https://me:s3cret@github.com/octocat/Hello-World.git")
+    await discovery.add_project(PathInput(path=str(alpha)))
+
+    state = await service.refresh(projects.record("alpha"))
+
+    assert state.remotes == {"origin": "https://github.com/octocat/Hello-World.git"}
+    summary = projects.summary("alpha")
+    assert summary.git is not None and summary.git.github_repo == "octocat/Hello-World"
+    assert summary.git.origin_url == "https://github.com/octocat/Hello-World.git"
+    assert "s3cret" not in service.state.model_dump_json() + summary.model_dump_json()
+
+
+# --- history, revisions, and refs ---
+
+
+async def test_logging_an_unknown_revision_fails_instead_of_returning_an_empty_history(
+    tmp_path: Path, git: Git
+) -> None:
+    repo = git.init(tmp_path / "repo")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    git.commit_all(repo, "Add a")
+
+    with pytest.raises(gitops.GitError, match="bad revision"):
+        await gitops.log(repo, "no-such-branch")
+    assert [c.subject for c in await gitops.log(repo, "HEAD")] == ["Add a"]
+
+
+async def test_git_commands_on_a_missing_directory_raise_a_git_error(tmp_path: Path) -> None:
+    with pytest.raises(gitops.GitError, match="is not a directory"):
+        await gitops.status(tmp_path / "deleted-project")
+
+
+async def test_ref_checks_treat_option_looking_text_as_a_name_not_an_option(tmp_path: Path, git: Git) -> None:
+    repo = git.init(tmp_path / "repo")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    sha = git.commit_all(repo, "Add a")
+    git(repo, "remote", "add", "origin", str(tmp_path / "elsewhere.git"))
+    option = "--output=" + (tmp_path / "pwned").as_posix()
+
+    assert not await gitops.ref_exists(repo, option)
+    assert await gitops.verified_commit(repo, "HEAD") == sha
+    with pytest.raises(gitops.GitError, match="not a commit"):
+        await gitops.verified_commit(repo, option)
+    assert await gitops.require_remote(repo, "origin") == "origin"
+    for refused in ("--receive-pack=touch pwned", "missing"):
+        with pytest.raises(gitops.GitError, match="not a remote"):
+            await gitops.require_remote(repo, refused)
+    assert await gitops.require_local_branch(repo, "main") == "main"
+    with pytest.raises(gitops.GitError, match="not a local branch"):
+        await gitops.require_local_branch(repo, "--force")
+    assert not (tmp_path / "pwned").exists()
+
+
+# --- the default branch is found, not assumed ---
+
+
+async def test_the_default_branch_is_the_manifests_else_origins_head_else_the_checked_out_branch_else_main(
+    tmp_path: Path, git: Git
+) -> None:
+    origin = git.init(tmp_path / "origin.git", branch="trunk", bare=True)
+    seed = git.init(tmp_path / "seed", branch="trunk")
+    (seed / "a.txt").write_text("a\n", encoding="utf-8")
+    git.commit_all(seed, "Seed")
+    git(seed, "push", "-q", str(origin), "trunk")
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", str(origin), str(clone))
+
+    assert await gitops.default_branch(clone, declared="release") == "release"
+    assert await gitops.default_branch(clone, declared=None) == "trunk", "origin/HEAD names trunk"
+
+    git(clone, "switch", "-q", "-c", "feature")
+    git(clone, "remote", "set-head", "origin", "--delete")
+    assert await gitops.default_branch(clone, declared=None) == "feature", "no origin/HEAD: the checked-out branch"
+
+    git(clone, "switch", "-q", "--detach", "HEAD")
+    git(clone, "branch", "-q", "-m", "trunk", "main")
+    assert await gitops.default_branch(clone, declared=None) == "main", "detached with no hint: main, since it exists"
+
+    git(clone, "branch", "-q", "-m", "main", "unrelated")
+    git(clone, "branch", "-q", "-D", "feature")
+    with pytest.raises(gitops.GitError, match=r"set default_branch in forge.project.toml"):
+        await gitops.default_branch(clone, declared=None)
+
+
+# --- when a checkout last fetched ---
+
+
+async def test_fetch_time_comes_from_the_checkouts_own_fetch_head_including_linked_worktrees(
+    tmp_path: Path, git: Git
+) -> None:
+    origin = git.init(tmp_path / "origin.git", bare=True)
+    seed = git.init(tmp_path / "seed")
+    (seed / "a.txt").write_text("a\n", encoding="utf-8")
+    git.commit_all(seed, "Seed")
+    git(seed, "push", "-q", str(origin), "main")
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", str(origin), str(clone))
+    linked = tmp_path / "linked"
+    git(clone, "worktree", "add", "-q", "--detach", str(linked))
+    assert (linked / ".git").is_file(), "a linked worktree's .git is a pointer file"
+
+    assert await gitops.fetch_time(clone) is None
+    assert await gitops.fetch_time(linked) is None
+
+    git(linked, "fetch", "-q", "origin")
+    assert await gitops.fetch_time(linked) is not None
+    assert await gitops.fetch_time(clone) is None, "FETCH_HEAD is per worktree"
+    git(clone, "fetch", "-q", "origin")
+    assert await gitops.fetch_time(clone) is not None
+
+
+# --- request strings are never options ---
+
+
+async def test_injection_strings_in_requests_are_refused_and_run_nothing(
+    git_service: tuple[GitService, ProjectsService, DiscoveryService, JobsService],
+    make_project: Callable[..., Path],
+    git: Git,
+    tmp_path: Path,
+) -> None:
+    service, _projects, discovery, jobs = git_service
+    alpha = make_project("Alpha")
+    remote = git.init(tmp_path / "remote.git", bare=True)
+    git(alpha, "remote", "add", "origin", str(remote))
+    await discovery.add_project(PathInput(path=str(alpha)))
+    pwned = tmp_path / "pwned.txt"
+    option = f"--output={pwned.as_posix()}"
+    jobs_before = len(jobs.state.jobs)
+
+    with pytest.raises(gitops.GitError):
+        await service.commits(CommitsInput(project_id="alpha", revision=option))
+    with pytest.raises(gitops.GitError, match="not a commit"):
+        await service.diff(DiffInput(project_id="alpha", commit=option))
+    with pytest.raises(gitops.GitError, match="not a remote"):
+        await service.push(PushInput(project_id="alpha", remote=f"--receive-pack=touch {pwned.as_posix()}"))
+    with pytest.raises(gitops.GitError, match="not a local branch"):
+        await service.push(PushInput(project_id="alpha", branch=f"--receive-pack=touch {pwned.as_posix()}"))
+    for switch in (False, True):
+        with pytest.raises(gitops.GitError):
+            await service.create_branch(BranchInput(project_id="alpha", name=option, switch=switch))
+        with pytest.raises(gitops.GitError):
+            await service.create_branch(
+                BranchInput(project_id="alpha", name="topic", start_point=option, switch=switch)
+            )
+
+    assert not pwned.exists()
+    assert len(jobs.state.jobs) == jobs_before, "a refused push never became a job"
+    assert git(alpha, "branch", "--list") == "* main"
+
+
+async def test_revisions_ranges_and_branches_still_work_when_they_are_real(
+    git_service: tuple[GitService, ProjectsService, DiscoveryService, JobsService],
+    make_project: Callable[..., Path],
+    git: Git,
+) -> None:
+    service, _projects, discovery, _jobs = git_service
+    alpha = make_project("Alpha")
+    (alpha / "more.txt").write_text("more\n", encoding="utf-8")
+    git.commit_all(alpha, "More")
+    await discovery.add_project(PathInput(path=str(alpha)))
+
+    ranged = await service.commits(CommitsInput(project_id="alpha", revision="HEAD~1..HEAD"))
+    assert [c.subject for c in ranged.commits] == ["More"]
+    await service.create_branch(BranchInput(project_id="alpha", name="from-start", start_point="HEAD~1", switch=True))
+    assert git(alpha, "branch", "--show-current") == "from-start"
+    assert git(alpha, "log", "-1", "--format=%s") == "Init Alpha"
+
+
+# --- the refresh loops survive a bad iteration ---
+
+
+async def test_a_project_directory_that_disappeared_is_a_refresh_error_not_an_exception(
+    git_service: tuple[GitService, ProjectsService, DiscoveryService, JobsService],
+    make_project: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    service, projects, discovery, _jobs = git_service
+    alpha = make_project("Alpha")
+    await discovery.add_project(PathInput(path=str(alpha)))
+    gone = dataclasses.replace(projects.record("alpha"), path=tmp_path / "deleted-since")
+
+    state = await service.refresh(gone)
+
+    assert state.error is not None and "is not a directory" in state.error
+
+
+async def test_the_polling_refresh_keeps_running_after_an_iteration_fails(
+    git_service: tuple[GitService, ProjectsService, DiscoveryService, JobsService],
+    make_project: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _projects, discovery, _jobs = git_service
+    await discovery.add_project(PathInput(path=str(make_project("Alpha"))))
+    await wait_for(lambda: service.repo_state("alpha") is not None)
+    original = service.refresh
+    calls: list[str] = []
+
+    async def flaky(record: ProjectRecord) -> RepoState:
+        calls.append(record.id)
+        if len(calls) == 1:
+            raise RuntimeError("one bad iteration")
+        return await original(record)
+
+    monkeypatch.setattr(service, "refresh", flaky)
+    service.config = service.config.model_copy(update={"poll_s": 0.05})  # below the config's own floor, for the test
+    await service.stop()
+    await service.start()
+
+    await wait_for(lambda: len(calls) >= 3, timeout_s=10)

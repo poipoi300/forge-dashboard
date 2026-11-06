@@ -30,10 +30,11 @@ def build_runtime(paths: DataPaths) -> Runtime:
     """A runtime with every service registered (nothing started, no I/O)."""
     runtime = Runtime(paths)
     jobs = JobsService(runtime)
-    scheduler = SchedulerService(runtime, jobs)
     discovery = DiscoveryService(runtime, jobs)
     manifests = ManifestsService(runtime)
     projects = ProjectsService(runtime, discovery, manifests)
+    # Scheduled runs target projects: catching up on missed ones waits until the registry has loaded.
+    scheduler = SchedulerService(runtime, jobs, targets_ready=lambda: projects.state.loaded)
     events = EventsService(runtime, projects)
     git = GitService(runtime, projects, jobs)
     checks = ChecksService(runtime, projects, git, jobs, scheduler)

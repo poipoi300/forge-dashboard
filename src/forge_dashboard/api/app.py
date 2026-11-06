@@ -10,6 +10,9 @@ types generated from it) carries every concrete model:
 - `POST /api/services/{id}/actions/{action}`   typed input -> typed output
 - `WS   /api/events`                           state patches and events, multiplexed
 - `GET  /api/health`                           200 once every service started
+
+Every route and the WebSocket answer only to loopback `Host` and `Origin` values unless the app is told more
+names (`api/access.py`).
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, create_model
 from pydantic.json_schema import models_json_schema
 
+from forge_dashboard.api.access import LOOPBACK_HOSTS, restrict_access
 from forge_dashboard.core.descriptors import ServiceDescriptor, describe
 from forge_dashboard.core.events import EventEnvelope
 from forge_dashboard.core.runtime import Runtime, StatePatch, StateSnapshot
@@ -246,6 +250,7 @@ def create_app(
     static_dir: Path | None = None,
     route_installers: Iterable[RouteInstaller] = (),
     on_ready: Callable[[Runtime], Awaitable[None]] | None = None,
+    allowed_hosts: Iterable[str] = LOOPBACK_HOSTS,
 ) -> FastAPI:
     """Mount `runtime`'s services on a FastAPI app; storage opens and services start in the lifespan.
 
@@ -254,22 +259,25 @@ def create_app(
         static_dir: Built UI served at `/` with an SPA fallback, when present.
         route_installers: Non-service routes (scripting API, report export).
         on_ready: Called after every service started (writes the server file).
+        allowed_hosts: Host names (no ports) the API answers to, as `Host` and as the host of `Origin`; the default
+            is this computer's loopback names.
     """
     ready = asyncio.Event()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        await runtime.start()
-        if on_ready is not None:
-            await on_ready(runtime)
-        ready.set()
         try:
+            await runtime.start()
+            if on_ready is not None:
+                await on_ready(runtime)
+            ready.set()
             yield
         finally:
             ready.clear()
             await runtime.stop()
 
     app = FastAPI(title="forge dashboard", version="1", lifespan=lifespan)
+    restrict_access(app, allowed_hosts)
 
     @app.exception_handler(ActionError)
     async def action_error(_request: Request, error: ActionError) -> JSONResponse:

@@ -4,6 +4,10 @@ Reads never write to the user's repository: `GIT_OPTIONAL_LOCKS=0` keeps
 `git status` from refreshing the index, and no read command takes a lock.
 Every command is non-interactive (`GIT_TERMINAL_PROMPT=0`,
 `GCM_INTERACTIVE=never`), so no credential prompt or GUI can appear.
+
+Text that came from an API request or a project file is never an option:
+revisions follow `--end-of-options`, positional values follow `--`, remotes
+are checked against `git remote`, and branches against `refs/heads`.
 """
 
 from __future__ import annotations
@@ -43,14 +47,24 @@ async def run(
     stdin: bytes | None = None,
     check: bool = True,
 ) -> tree.CompletedRun:
-    """Run `git -C repo <args>`; raise `GitError` on failure unless `check` is False."""
+    """Run `git -C repo <args>`; raise `GitError` on failure unless `check` is False.
+
+    Raises:
+        GitError: when `repo` is not a directory, or git fails and `check` is set.
+    """
+    if not repo.is_dir():
+        raise GitError(f"{repo} is not a directory")
     result = await tree.run(
         ["git", "-C", str(repo), *CONFIG, *args], repo, git_env(env), timeout_s=timeout_s, stdin=stdin
     )
     if check and not result.ok:
-        reason = "timed out" if result.timed_out else (result.stderr.strip() or result.stdout.strip())
-        raise GitError(f"git {args[0]} failed: {reason}")
+        raise GitError(f"git {args[0]} failed: {failure_reason(result)}")
     return result
+
+
+def failure_reason(result: tree.CompletedRun) -> str:
+    """Why a command failed, in git's own words: stderr, else stdout (merged streams), else the timeout."""
+    return "timed out" if result.timed_out else (result.stderr.strip() or result.stdout.strip())
 
 
 async def output(repo: Path, *args: str, timeout_s: float = 60) -> str:
@@ -73,14 +87,15 @@ async def head_sha(repo: Path) -> str | None:
 
 
 async def log(repo: Path, *revisions: str, limit: int = 30, stats: bool = True) -> list[gitparse.Commit]:
-    args = ["log", f"-n{limit}", f"--format={gitparse.LOG_FORMAT}", *(["--shortstat"] if stats else []), *revisions]
-    result = await run(repo, *args, check=False)
-    if not result.ok:
-        # An empty repository has no HEAD to log; that is an empty history, not a failure.
-        if "does not have any commits" in result.stderr or "unknown revision" in result.stderr:
-            return []
-        raise GitError(f"git log failed: {result.stderr.strip()}")
-    return gitparse.parse_log(result.stdout)
+    """Commits reachable from `revisions` (HEAD when none); an unborn branch has an empty history.
+
+    Raises:
+        GitError: when a revision does not exist.
+    """
+    if not revisions and await head_sha(repo) is None:
+        return []
+    args = ["log", f"-n{limit}", f"--format={gitparse.LOG_FORMAT}", *(["--shortstat"] if stats else [])]
+    return gitparse.parse_log(await output(repo, *args, "--end-of-options", *revisions, "--"))
 
 
 async def branches(repo: Path) -> list[gitparse.Branch]:
@@ -89,7 +104,22 @@ async def branches(repo: Path) -> list[gitparse.Branch]:
 
 
 async def remotes(repo: Path) -> dict[str, str]:
+    """Remote name -> fetch URL, userinfo removed: git commands address a remote by name, never by this URL."""
     return gitparse.parse_remotes(await output(repo, "remote", "-v"))
+
+
+async def require_remote(repo: Path, name: str) -> str:
+    """`name`, once it is confirmed to be one of the repository's remotes."""
+    if name not in (await output(repo, "remote")).splitlines():
+        raise GitError(f"{name!r} is not a remote of this repository")
+    return name
+
+
+async def require_local_branch(repo: Path, name: str) -> str:
+    """`name`, once it is confirmed to be an existing local branch."""
+    if not await ref_exists(repo, f"refs/heads/{name}"):
+        raise GitError(f"{name!r} is not a local branch of this repository")
+    return name
 
 
 async def worktrees(repo: Path) -> list[gitparse.Worktree]:
@@ -102,11 +132,57 @@ async def stash_count(repo: Path) -> int:
 
 
 async def count(repo: Path, revision_range: str) -> int:
-    return int((await output(repo, "rev-list", "--count", revision_range)).strip() or 0)
+    return int((await output(repo, "rev-list", "--count", "--end-of-options", revision_range)).strip() or 0)
 
 
 async def ref_exists(repo: Path, ref: str) -> bool:
-    return (await run(repo, "rev-parse", "--verify", "-q", ref, check=False)).ok
+    return (await run(repo, "rev-parse", "--verify", "-q", "--end-of-options", ref, check=False)).ok
+
+
+async def verified_commit(repo: Path, revision: str) -> str:
+    """The commit `revision` names, resolved by git, so callers pass the sha on instead of the text they were given.
+
+    Raises:
+        GitError: when `revision` is not a commit of this repository.
+    """
+    result = await run(repo, "rev-parse", "--verify", "-q", "--end-of-options", f"{revision}^{{commit}}", check=False)
+    if not result.ok or not result.stdout.strip():
+        raise GitError(f"{revision!r} is not a commit of this repository")
+    return result.stdout.strip()
+
+
+async def default_branch(repo: Path, *, declared: str | None) -> str:
+    """The branch that syncs and bring-ups start from.
+
+    The manifest's own `declared` name wins. Without one: the branch origin's
+    HEAD points at, else the checked-out branch, else `main`; the first that
+    exists as a local branch.
+
+    Raises:
+        GitError: when none of them exists, so the manifest must name the branch.
+    """
+    if declared is not None:
+        return declared
+    origin_head = await run(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", check=False)
+    checked_out = await run(repo, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    candidates = [
+        origin_head.stdout.strip().removeprefix("origin/") if origin_head.ok else "",
+        checked_out.stdout.strip() if checked_out.ok else "",
+        "main",
+    ]
+    for candidate in candidates:
+        if candidate and await ref_exists(repo, f"refs/heads/{candidate}"):
+            return candidate
+    raise GitError(f"cannot tell which branch of {repo} is the default; set default_branch in forge.project.toml")
+
+
+async def fetch_time(repo: Path) -> float | None:
+    """When the checkout last fetched, from its own FETCH_HEAD (linked worktrees keep theirs apart); None before any."""
+    location = (await output(repo, "rev-parse", "--git-path", "FETCH_HEAD")).strip()
+    try:
+        return await asyncio.to_thread(lambda: (repo / location).stat().st_mtime)
+    except FileNotFoundError:
+        return None
 
 
 async def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:

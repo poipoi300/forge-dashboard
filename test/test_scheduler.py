@@ -1,18 +1,26 @@
 """Scheduling math and the persistent scheduler service."""
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
+from testing_support import wait_for
 
+from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
-from forge_dashboard.core.service import NoInput
+from forge_dashboard.core.service import Done, JobRef, NoInput, Service, action
 from forge_dashboard.domain import scheduling
 from forge_dashboard.domain.scheduling import CronSchedule, IntervalSchedule, ManualSchedule
+from forge_dashboard.services import scheduler as scheduler_module
+from forge_dashboard.services.discovery import DiscoveryService
 from forge_dashboard.services.gallery import GalleryService
-from forge_dashboard.services.jobs import JobsService, JobStatus
-from forge_dashboard.services.scheduler import EntryInput, SchedulerService
+from forge_dashboard.services.jobs import JobContext, JobOutcome, JobsService, JobStatus
+from forge_dashboard.services.manifests import ManifestsService
+from forge_dashboard.services.projects import ProjectsService
+from forge_dashboard.services.scheduler import EntryInput, ScheduleEntry, SchedulerService
 
 NOON = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
 
@@ -151,3 +159,272 @@ async def test_entries_survive_restart_and_missed_runs_fire_once(make_runtime: C
         assert scheduler.entry("ping") is None
     finally:
         await restarted.stop()
+
+
+# --- dispatch waits for the services entries target ---
+
+
+class Empty(BaseModel):
+    pass
+
+
+class Observer(Service[Empty, Empty]):
+    """Records whether the project registry had loaded when an entry reached it."""
+
+    id = "observer"
+    title = "Observer"
+    description = "Test target for scheduled entries."
+    Config = Empty
+    State = Empty
+
+    def __init__(self, runtime: Runtime, projects: ProjectsService) -> None:
+        super().__init__(runtime)
+        self._projects = projects
+        self.registry_loaded_at_dispatch: list[bool] = []
+
+    @action(title="Observe")
+    async def observe(self, _request: NoInput) -> Done:
+        self.registry_loaded_at_dispatch.append(self._projects.state.loaded)
+        return Done()
+
+
+class JobMaker(Service[Empty, Empty]):
+    """Target of an entry whose action submits a job that fails."""
+
+    id = "jobmaker"
+    title = "Job maker"
+    description = "Test target for scheduled entries."
+    Config = Empty
+    State = Empty
+
+    def __init__(self, runtime: Runtime, jobs: JobsService) -> None:
+        super().__init__(runtime)
+        self._jobs = jobs
+
+    @action(title="Fail in a job", long_running=True)
+    async def fail_in_a_job(self, _request: NoInput) -> JobRef:
+        async def work(context: JobContext) -> JobOutcome:
+            return JobOutcome(status=JobStatus.FAILED, summary="the job failed")
+
+        return await self._jobs.submit(kind="test.fail", title="Failing job", work=work)
+
+
+async def test_nothing_is_dispatched_until_the_targets_are_ready(data_paths: DataPaths) -> None:
+    ready = False
+    runtime = Runtime(data_paths)
+    jobs = JobsService(runtime)
+    scheduler = SchedulerService(runtime, jobs, targets_ready=lambda: ready)
+    gallery = GalleryService(runtime, jobs)
+    runtime.register([jobs, scheduler, gallery])
+    await runtime.start()
+    try:
+        await scheduler.upsert(
+            entry_id="ping",
+            owner="test",
+            title="Ping",
+            project_id=None,
+            target_service="gallery",
+            target_action="ping",
+            payload={},
+            schedule=IntervalSchedule(every_s=60),
+        )
+        later = datetime.now(tz=UTC) + timedelta(hours=2)
+        assert await scheduler.tick(later) == []
+        assert gallery.state.pings == 0
+        ready = True
+        assert await scheduler.tick(later) == ["ping"]
+        assert gallery.state.pings == 1
+    finally:
+        await runtime.stop()
+
+
+async def test_a_missed_run_waits_for_the_project_registry_to_load_then_runs_once(
+    data_paths: DataPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(scheduler_module, "TICK_S", 0.05)
+    runtime = Runtime(data_paths)
+    jobs = JobsService(runtime)
+    discovery = DiscoveryService(runtime, jobs)
+    manifests = ManifestsService(runtime)
+    projects = ProjectsService(runtime, discovery, manifests)
+    scheduler = SchedulerService(runtime, jobs, targets_ready=lambda: projects.state.loaded)
+    observer = Observer(runtime, projects)
+    runtime.register([jobs, scheduler, manifests, projects, observer, discovery])
+    await runtime.open()
+    await runtime.db.kv_put("config", "discovery", {"roots": [str(tmp_path / "no-projects-here")]})
+    missed = ScheduleEntry(
+        id="missed",
+        owner="test",
+        title="Missed while the dashboard was down",
+        target_service="observer",
+        target_action="observe",
+        schedule=IntervalSchedule(every_s=3600),
+        next_run_at=NOON.timestamp() - 86400,
+    )
+    await runtime.db.execute("INSERT INTO schedules (id, entry) VALUES (?, ?)", (missed.id, missed.model_dump_json()))
+    await runtime.start()
+    try:
+        await wait_for(lambda: observer.registry_loaded_at_dispatch != [])
+        await asyncio.sleep(0.3)  # more ticks pass; the missed run does not repeat
+        assert observer.registry_loaded_at_dispatch == [True]
+        entry = scheduler.entry("missed")
+        assert entry is not None and entry.last_status is JobStatus.SUCCEEDED
+    finally:
+        await runtime.stop()
+
+
+# --- an entry removed, replaced, or crashing while it is dispatched ---
+
+
+async def _upsert(
+    scheduler: SchedulerService, entry_id: str, *, title: str | None = None, payload: dict[str, JsonValue] | None = None
+) -> ScheduleEntry:
+    return await scheduler.upsert(
+        entry_id=entry_id,
+        owner="test",
+        title=title or entry_id,
+        project_id=None,
+        target_service="gallery",
+        target_action="ping",
+        payload=payload or {},
+        schedule=IntervalSchedule(every_s=60),
+    )
+
+
+async def test_removing_another_entry_while_one_dispatches_does_not_break_the_tick(
+    started_runtime: Runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scheduler, _jobs, _gallery = _services(started_runtime)
+    for name in ("a", "b"):
+        await _upsert(scheduler, name, payload={"which": name})
+
+    async def invoke(service_id: str, action_id: str, payload: dict[str, JsonValue]) -> BaseModel:
+        await scheduler.remove("b" if payload["which"] == "a" else "a")
+        return Done()
+
+    monkeypatch.setattr(started_runtime, "invoke", invoke)
+    dispatched = await scheduler.tick(datetime.now(tz=UTC) + timedelta(hours=2))
+
+    assert len(dispatched) == 1
+    assert [entry.id for entry in scheduler.state.entries] == dispatched
+
+
+async def test_an_entry_removed_while_its_own_run_dispatches_is_not_resurrected(
+    started_runtime: Runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scheduler, _jobs, _gallery = _services(started_runtime)
+    await _upsert(scheduler, "doomed")
+
+    async def invoke(service_id: str, action_id: str, payload: dict[str, JsonValue]) -> BaseModel:
+        await scheduler.remove("doomed")
+        return Done()
+
+    monkeypatch.setattr(started_runtime, "invoke", invoke)
+    assert await scheduler.tick(datetime.now(tz=UTC) + timedelta(hours=2)) == ["doomed"]
+
+    assert scheduler.entry("doomed") is None and scheduler.state.entries == []
+    assert await started_runtime.db.fetch_all("SELECT id FROM schedules") == []
+
+
+async def test_an_entry_replaced_while_its_run_dispatches_keeps_its_new_definition(
+    started_runtime: Runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scheduler, _jobs, _gallery = _services(started_runtime)
+    await _upsert(scheduler, "edited")
+
+    async def invoke(service_id: str, action_id: str, payload: dict[str, JsonValue]) -> BaseModel:
+        await _upsert(scheduler, "edited", title="Edited while running")
+        return Done()
+
+    monkeypatch.setattr(started_runtime, "invoke", invoke)
+    await scheduler.tick(datetime.now(tz=UTC) + timedelta(hours=2))
+
+    entry = scheduler.entry("edited")
+    assert entry is not None and entry.title == "Edited while running" and entry.last_status is JobStatus.SUCCEEDED
+
+
+async def test_an_action_that_crashes_is_a_failed_run_and_the_schedule_goes_on(
+    started_runtime: Runtime, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    scheduler, _jobs, _gallery = _services(started_runtime)
+    await _upsert(scheduler, "crashy")
+
+    async def invoke(service_id: str, action_id: str, payload: dict[str, JsonValue]) -> BaseModel:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(started_runtime, "invoke", invoke)
+    later = datetime.now(tz=UTC) + timedelta(hours=2)
+    async with started_runtime.bus.subscribe() as events:
+        assert await scheduler.tick(later) == ["crashy"]
+        envelope = events.get_nowait()
+
+    assert envelope.type == "scheduler.run-failed" and envelope.data["detail"] == "RuntimeError: boom"
+    entry = scheduler.entry("crashy")
+    assert entry is not None and entry.last_status is JobStatus.FAILED
+    assert entry.next_run_at is not None and entry.next_run_at > later.timestamp()
+    assert "scheduled run crashy crashed" in caplog.text
+
+
+async def test_the_dispatch_loop_survives_a_tick_that_raises(
+    make_runtime: Callable[[], Runtime], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(scheduler_module, "TICK_S", 0.02)
+    runtime = make_runtime()
+    scheduler, _jobs, _gallery = _services(runtime)
+    ticks: list[datetime] = []
+
+    async def flaky(now: datetime) -> list[str]:
+        ticks.append(now)
+        if len(ticks) == 1:
+            raise RuntimeError("tick broke")
+        return []
+
+    monkeypatch.setattr(scheduler, "tick", flaky)
+    await runtime.start()
+    try:
+        await wait_for(lambda: len(ticks) >= 3)
+    finally:
+        await runtime.stop()
+    assert "scheduler tick failed" in caplog.text
+
+
+# --- stop and start are symmetric ---
+
+
+async def test_stopping_and_starting_the_scheduler_reloads_entries_and_reports_a_failed_job_once(
+    make_runtime: Callable[[], Runtime],
+) -> None:
+    runtime = make_runtime()
+    scheduler, jobs, _gallery = _services(runtime)
+    runtime.register([JobMaker(runtime, jobs)])
+    await runtime.start()
+    try:
+        await scheduler.upsert(
+            entry_id="failing-job",
+            owner="test",
+            title="Failing job",
+            project_id=None,
+            target_service="jobmaker",
+            target_action="fail-in-a-job",
+            payload={},
+            schedule=IntervalSchedule(every_s=60),
+        )
+        await scheduler.stop()
+        assert scheduler.entry("failing-job") is None
+        await scheduler.start()
+        assert scheduler.entry("failing-job") is not None
+
+        async with runtime.bus.subscribe() as events:
+            assert await scheduler.tick(datetime.now(tz=UTC) + timedelta(hours=2)) == ["failing-job"]
+            dispatched = scheduler.entry("failing-job")
+            assert dispatched is not None and dispatched.last_job_id is not None
+            await jobs.wait(dispatched.last_job_id)
+            await asyncio.sleep(0.2)
+            failures = []
+            while not events.empty():
+                envelope = events.get_nowait()
+                if envelope.type == "scheduler.run-failed":
+                    failures.append(envelope)
+        assert len(failures) == 1
+    finally:
+        await runtime.stop()

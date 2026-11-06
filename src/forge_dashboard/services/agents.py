@@ -21,6 +21,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, override
 
@@ -30,6 +31,7 @@ from forge_dashboard import gitops, worktrees
 from forge_dashboard.branchwork import BranchRun, BranchRunState, BranchWork, CheckOutcomeBrief
 from forge_dashboard.core.events import Event, Severity
 from forge_dashboard.core.service import ActionError, JobRef, NoInput, ProjectRef, Service, action
+from forge_dashboard.core.tasks import repeat
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain import claude_sessions, harness
 from forge_dashboard.domain.claude_sessions import ClaudeProcess, ClaudeSession
@@ -257,6 +259,11 @@ UPDATE_DEPS_GUIDANCE = (
 )
 
 
+async def base_branch_of(record: ProjectRecord) -> str:
+    """The branch work starts from: the manifest's `default_branch` when it sets one, else the repo's own."""
+    return await gitops.default_branch(record.path, declared=record.declared_default_branch)
+
+
 def _git_rules() -> str:
     return (
         "Rules: edit files only. Do not run git; the dashboard runs every git command. Keep every existing "
@@ -303,9 +310,12 @@ class AgentsService(Service[AgentsConfig, AgentsState], ProjectListener):
         await self.runtime.db.execute(
             "UPDATE agent_runs SET outcome = 'failed', ended_at = ? WHERE outcome = 'running'", (time.time(),)
         )
+        await self.branch_work.fail_interrupted()
         await self._refresh_lists()
         self._refresh_harness()
-        self._insight_task = asyncio.create_task(self._insight_loop(), name="agents-insight")
+        self._insight_task = asyncio.create_task(
+            repeat(self._insight_once, lambda: INSIGHT_REFRESH_S, label="agent insight"), name="agents-insight"
+        )
 
     @override
     async def stop(self) -> None:
@@ -320,7 +330,7 @@ class AgentsService(Service[AgentsConfig, AgentsState], ProjectListener):
 
     @override
     async def project_upserted(self, record: ProjectRecord) -> None:
-        await self._insight_for([record], claude_sessions.running_claude_processes())
+        await self._insight_for([record], await asyncio.to_thread(claude_sessions.running_claude_processes))
 
     def _refresh_harness(self) -> None:
         executable = self.config.harness.command[0] if self.config.harness.command else ""
@@ -337,11 +347,9 @@ class AgentsService(Service[AgentsConfig, AgentsState], ProjectListener):
         configured = self.config.claude_projects_dir
         return Path(configured) if configured else claude_sessions.default_projects_dir()
 
-    async def _insight_loop(self) -> None:
-        while True:
-            processes = await asyncio.to_thread(claude_sessions.running_claude_processes)
-            await self._insight_for(self._projects.records(), processes)
-            await asyncio.sleep(INSIGHT_REFRESH_S)
+    async def _insight_once(self) -> None:
+        processes = await asyncio.to_thread(claude_sessions.running_claude_processes)
+        await self._insight_for(self._projects.records(), processes)
 
     async def _insight_for(self, records: list[ProjectRecord], processes: list[ClaudeProcess]) -> None:
         projects_dir = self._projects_dir()
@@ -507,6 +515,10 @@ class AgentsService(Service[AgentsConfig, AgentsState], ProjectListener):
 
     # --- branch-run flows ---
 
+    def guard_branch_run(self, run: BranchRun, repo: Path) -> AbstractAsyncContextManager[None]:
+        """Wrap the work on a branch run so that an error or a cancellation never leaves it `running`."""
+        return self.branch_work.guarded(run, repo, on_change=self._branch_changed)
+
     async def branch_flow(
         self,
         *,
@@ -528,34 +540,48 @@ class AgentsService(Service[AgentsConfig, AgentsState], ProjectListener):
                 kind=kind,
                 title=title,
                 branch_prefix=branch_prefix,
-                base_branch=record.default_branch,
+                base_branch=await base_branch_of(record),
                 job_id=context.job_id,
             )
-            await self._branch_changed(run)
-            agent = await self.run_agent(
-                context, kind=run_kind, project_id=record.id, prompt=await prompt_for(worktree.path), cwd=worktree.path
-            )
-            run = run.model_copy(update={"agent_run_ids": [agent.run_id], "agent_attempts": 1})
-            if agent.outcome != "succeeded":
-                run = await self.branch_work.finish(run, record.path, summary="agent run failed", error=agent.outcome)
+            async with self.guard_branch_run(run, record.path):
                 await self._branch_changed(run)
-                return JobOutcome(status=JobStatus.FAILED, summary=f"agent {agent.outcome}")
-            await worktrees.commit_all(
-                worktree.path, f"{title}\n\nWritten by an agent run ({agent.run_id}) from the forge dashboard."
-            )
-            checks = record.manifest.checks if record.manifest is not None else []
-            results = await self._checks.run_checks_in(
-                context, record, list(checks), worktree.path, record_results=False, on_head=True, sha=None, dirty=False
-            )
-            run = run.model_copy(
-                update={"checks": [CheckOutcomeBrief(check_id=c.id, label=c.label, outcome=o) for c, o in results]}
-            )
-            failing = [c.label for c, o in results if o != "passed"]
-            summary = "checks passing" if not failing else f"checks failing: {', '.join(failing)}"
-            run = await self.branch_work.finish(run, record.path, summary=summary)
-            await self._branch_changed(run)
-            status = JobStatus.ATTENTION if run.state is BranchRunState.READY else JobStatus.FAILED
-            return JobOutcome(status=status, summary=f"{run.files_changed} files changed; {summary}")
+                agent = await self.run_agent(
+                    context,
+                    kind=run_kind,
+                    project_id=record.id,
+                    prompt=await prompt_for(worktree.path),
+                    cwd=worktree.path,
+                )
+                run = run.model_copy(update={"agent_run_ids": [agent.run_id], "agent_attempts": 1})
+                if agent.outcome != "succeeded":
+                    run = await self.branch_work.finish(
+                        run, record.path, summary="agent run failed", error=agent.outcome
+                    )
+                    await self._branch_changed(run)
+                    return JobOutcome(status=JobStatus.FAILED, summary=f"agent {agent.outcome}")
+                await worktrees.commit_all(
+                    worktree.path, f"{title}\n\nWritten by an agent run ({agent.run_id}) from the forge dashboard."
+                )
+                checks = record.manifest.checks if record.manifest is not None else []
+                results = await self._checks.run_checks_in(
+                    context,
+                    record,
+                    list(checks),
+                    worktree.path,
+                    record_results=False,
+                    on_head=True,
+                    sha=None,
+                    dirty=False,
+                )
+                run = run.model_copy(
+                    update={"checks": [CheckOutcomeBrief(check_id=c.id, label=c.label, outcome=o) for c, o in results]}
+                )
+                failing = [c.label for c, o in results if o != "passed"]
+                summary = "checks passing" if not failing else f"checks failing: {', '.join(failing)}"
+                run = await self.branch_work.finish(run, record.path, summary=summary)
+                await self._branch_changed(run)
+                status = JobStatus.ATTENTION if run.state is BranchRunState.READY else JobStatus.FAILED
+                return JobOutcome(status=status, summary=f"{run.files_changed} files changed; {summary}")
 
         return await self._jobs.submit(
             kind=f"agents.{kind}", title=title, work=work, project_id=record.id, resources=[f"repo:{record.id}"]
@@ -716,7 +742,7 @@ class AgentsService(Service[AgentsConfig, AgentsState], ProjectListener):
         if self._pulls is None:
             raise ActionError("GitHub is not connected", status=409)
         record = self._projects.record(run.project_id)
-        await gitops.run(record.path, "push", "-u", "origin", run.branch, timeout_s=300)
+        await gitops.run(record.path, "push", "-u", "--", "origin", run.branch, timeout_s=300)
         body = request.body or f"{run.summary or ''}\n\n```\n{run.diffstat}\n```\n\nOpened from the forge dashboard."
         url = await self._pulls.open_pull_request(
             record.id, run.branch, run.base_branch, request.title or run.title, body

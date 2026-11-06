@@ -1,20 +1,23 @@
 """The agent harness: argv and transcript parsing, isolated runs, branch work, and session insight."""
 
+import asyncio
 import json
+import sys
+import threading
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
-from conftest import Git
+from conftest import MANIFEST, Git
 from pydantic import JsonValue
-from testing_support import fake_harness_config
+from testing_support import fake_harness_config, wait_for
 
 from forge_dashboard import worktrees
-from forge_dashboard.branchwork import BranchRunState
+from forge_dashboard.branchwork import INTERRUPTED, BranchRunState
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import ActionError, NoInput, ProjectRef
-from forge_dashboard.domain import harness
+from forge_dashboard.domain import claude_sessions, harness
 from forge_dashboard.domain.harness import HarnessConfig, RunKindSettings
 from forge_dashboard.services.agents import (
     AgentsConfig,
@@ -27,11 +30,12 @@ from forge_dashboard.services.agents import (
     RunsInput,
     TranscriptInput,
     UpdateDepsInput,
+    base_branch_of,
 )
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import DiscoveryService, PathInput
 from forge_dashboard.services.git import GitService
-from forge_dashboard.services.jobs import JobContext, JobOutcome, JobsService, JobStatus
+from forge_dashboard.services.jobs import JobContext, JobIdInput, JobOutcome, JobsService, JobStatus
 from forge_dashboard.services.manifests import ManifestsService
 from forge_dashboard.services.projects import ProjectsService
 from forge_dashboard.services.scheduler import SchedulerService
@@ -297,3 +301,147 @@ async def test_worktree_commits_use_the_repo_identity_or_the_dashboards(tmp_path
     sha = await worktrees.commit_all(repo, "Add a")
     assert sha is not None and git(repo, "log", "-1", "--format=%ae") == "me@example.com"
     assert await worktrees.commit_all(repo, "Nothing") is None
+
+
+AgentsEnv = tuple[AgentsService, ProjectsService, DiscoveryService, JobsService, FakeGitHub, Runtime]
+
+
+async def test_an_error_after_the_worktree_exists_fails_the_run_and_leaves_it_discardable(
+    agents_env: AgentsEnv, make_project: Callable[..., Path]
+) -> None:
+    agents, _projects, discovery, jobs, _github, _runtime = agents_env
+    alpha = make_project("Alpha")
+    await discovery.add_project(PathInput(path=str(alpha)))
+    hook = alpha / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n", encoding="utf-8", newline="\n")
+
+    final = await jobs.wait((await agents.update_dependencies(UpdateDepsInput(project_id="alpha"))).job_id)
+
+    assert final.status is JobStatus.FAILED and "hook says no" in (final.error or "")
+    [run] = (await agents.branch_runs(BranchRunsInput(project_id="alpha"))).runs
+    assert run.state is BranchRunState.FAILED and "hook says no" in (run.error or "")
+    assert Path(run.worktree).is_dir(), "the work stays for inspection"
+    assert agents.state.branch_runs[0].state is BranchRunState.FAILED, "the published list follows"
+    discarded = await agents.discard_branch(BranchRunInput(run_id=run.id))
+    assert discarded.state is BranchRunState.DISCARDED and not Path(run.worktree).exists()
+
+
+async def test_cancelling_a_branch_flow_discards_the_run_with_its_worktree_and_branch(
+    agents_env: AgentsEnv, make_project: Callable[..., Path], git: Git
+) -> None:
+    agents, _projects, discovery, jobs, _github, _runtime = agents_env
+    alpha = make_project("Alpha")
+    await discovery.add_project(PathInput(path=str(alpha)))
+    hang = HarnessConfig(command=[sys.executable, "-c", "import time; time.sleep(120)"], stdin=None)
+    await agents.update_config(AgentsConfig(harness=hang))
+    ref = await agents.update_dependencies(UpdateDepsInput(project_id="alpha"))
+    await wait_for(lambda: any(run.outcome == "running" for run in agents.state.runs))
+
+    with pytest.raises(ActionError, match="still running"):
+        await agents.discard_branch(BranchRunInput(run_id=agents.state.branch_runs[0].id))
+    await jobs.cancel(JobIdInput(job_id=ref.job_id))
+
+    assert (await jobs.wait(ref.job_id)).status is JobStatus.CANCELLED
+    [run] = (await agents.branch_runs(BranchRunsInput(project_id="alpha"))).runs
+    assert run.state is BranchRunState.DISCARDED
+    assert not Path(run.worktree).exists() and git(alpha, "branch", "--list", "forge-deps/*") == ""
+
+
+async def test_branch_runs_left_running_by_a_restart_are_failed_when_the_service_starts(
+    agents_env: AgentsEnv, make_project: Callable[..., Path]
+) -> None:
+    agents, _projects, discovery, _jobs, _github, _runtime = agents_env
+    alpha = make_project("Alpha")
+    await discovery.add_project(PathInput(path=str(alpha)))
+    run, worktree = await agents.branch_work.start(
+        repo=alpha,
+        project_id="alpha",
+        kind="delegate",
+        title="Lost with the old process",
+        branch_prefix="forge-issue/9",
+        base_branch="main",
+        job_id="gone",
+    )
+
+    await agents.stop()
+    await agents.start()
+
+    [after] = (await agents.branch_runs(BranchRunsInput(project_id="alpha"))).runs
+    assert after.id == run.id and after.state is BranchRunState.FAILED and after.error == INTERRUPTED
+    assert worktree.path.is_dir()
+    assert agents.state.branch_runs[0].state is BranchRunState.FAILED
+    assert (await agents.discard_branch(BranchRunInput(run_id=run.id))).state is BranchRunState.DISCARDED
+
+
+async def test_work_starts_from_the_real_default_branch_when_the_manifest_does_not_name_one(
+    agents_env: AgentsEnv, make_project: Callable[..., Path], git: Git
+) -> None:
+    agents, projects, discovery, jobs, _github, _runtime = agents_env
+    loose = make_project("Loose", manifest=None)
+    git(loose, "branch", "-m", "main", "trunk")
+    unnamed = make_project("Unnamed")
+    git(unnamed, "branch", "-m", "main", "master")
+    for project in (loose, unnamed):
+        await discovery.add_project(PathInput(path=str(project)))
+    project_ids = {record.path: record.id for record in projects.records()}
+
+    assert await base_branch_of(projects.record(project_ids[loose.resolve()])) == "trunk"
+    assert await base_branch_of(projects.record(project_ids[unnamed.resolve()])) == "master"
+    final = await jobs.wait(
+        (await agents.update_dependencies(UpdateDepsInput(project_id=project_ids[loose.resolve()]))).job_id
+    )
+    assert final.status is JobStatus.ATTENTION
+    [run] = (await agents.branch_runs(BranchRunsInput(project_id=project_ids[loose.resolve()]))).runs
+    assert run.base_branch == "trunk"
+
+
+async def test_a_manifests_own_default_branch_wins(
+    agents_env: AgentsEnv, make_project: Callable[..., Path], git: Git
+) -> None:
+    _agents, projects, discovery, _jobs, _github, _runtime = agents_env
+    declared = make_project(
+        "Declared", manifest=MANIFEST.replace('kind = "app"', 'kind = "app"\ndefault_branch = "develop"')
+    )
+    git(declared, "branch", "develop")
+    await discovery.add_project(PathInput(path=str(declared)))
+
+    assert await base_branch_of(projects.record("declared")) == "develop"
+
+
+async def test_finding_claude_processes_for_a_new_project_happens_off_the_event_loop(
+    agents_env: AgentsEnv, make_project: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agents, projects, discovery, _jobs, _github, _runtime = agents_env
+    await discovery.add_project(PathInput(path=str(make_project("Alpha"))))
+    scanning_threads: list[threading.Thread] = []
+
+    def scan() -> list[claude_sessions.ClaudeProcess]:
+        scanning_threads.append(threading.current_thread())
+        return []
+
+    monkeypatch.setattr(claude_sessions, "running_claude_processes", scan)
+
+    await agents.project_upserted(projects.record("alpha"))
+
+    assert scanning_threads and all(thread is not threading.main_thread() for thread in scanning_threads)
+
+
+async def test_the_claude_insight_loop_keeps_running_after_a_scan_fails(
+    agents_env: AgentsEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agents, _projects, _discovery, _jobs, _github, _runtime = agents_env
+    scans: list[int] = []
+
+    def flaky_scan() -> list[claude_sessions.ClaudeProcess]:
+        scans.append(1)
+        if len(scans) == 1:
+            raise RuntimeError("process table unreadable")
+        return []
+
+    monkeypatch.setattr(claude_sessions, "running_claude_processes", flaky_scan)
+    monkeypatch.setattr("forge_dashboard.services.agents.INSIGHT_REFRESH_S", 0.05)
+    await agents.stop()
+    await agents.start()
+
+    await wait_for(lambda: len(scans) >= 3, timeout_s=10)
+    await asyncio.sleep(0)  # let the loop's last iteration settle before the fixture stops the service

@@ -2,37 +2,25 @@
 
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from forge_dashboard.api.app import create_app, require_output_fields
+from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import JobRef, NoInput, Service, action
+from forge_dashboard.core.ui import DisplayFormat, Widget
 
-ALL_WIDGETS = {
-    "text",
-    "textarea",
-    "number",
-    "slider",
-    "toggle",
-    "select",
-    "radio-cards",
-    "multiselect",
-    "tags",
-    "path-dir",
-    "path-file",
-    "color",
-    "duration",
-    "cron",
-    "secret",
-    "code",
-    "json",
-    "model-picker",
-}
-ALL_FORMATS = {"relative-time", "duration", "bytes", "percent", "progress", "badge", "code", "url", "path"}
+LOOPBACK_URL = "http://127.0.0.1:8760"
+# The test client opens WebSockets on `ws://testserver` whatever its base URL is, so the stream is addressed in full.
+STREAM_URL = "ws://127.0.0.1:8760/api/events"
+
+# Everything the renderer understands: the gallery service exists to exercise each one.
+ALL_WIDGETS = set(get_args(Widget))
+ALL_FORMATS = set(get_args(DisplayFormat))
 
 
 def _hints(schema: dict[str, Any], key: str) -> set[str]:
@@ -41,7 +29,7 @@ def _hints(schema: dict[str, Any], key: str) -> set[str]:
 
 @pytest.fixture
 def client(make_runtime: Callable[[], Runtime]) -> Any:
-    with TestClient(create_app(make_runtime())) as test_client:
+    with TestClient(create_app(make_runtime()), base_url=LOOPBACK_URL) as test_client:
         yield test_client
 
 
@@ -87,15 +75,15 @@ def test_config_round_trips_and_persists(client: TestClient) -> None:
 
 
 def test_config_survives_a_restart(make_runtime: Callable[[], Runtime]) -> None:
-    with TestClient(create_app(make_runtime())) as first:
+    with TestClient(create_app(make_runtime()), base_url=LOOPBACK_URL) as first:
         config = first.get("/api/services/gallery/config").json()
         first.put("/api/services/gallery/config", json={**config, "count": 7})
-    with TestClient(create_app(make_runtime())) as second:
+    with TestClient(create_app(make_runtime()), base_url=LOOPBACK_URL) as second:
         assert second.get("/api/services/gallery/config").json()["count"] == 7
 
 
 def test_event_stream_sends_snapshots_then_patches_and_events(client: TestClient) -> None:
-    with client.websocket_connect("/api/events") as stream:
+    with client.websocket_connect(STREAM_URL) as stream:
         hello = stream.receive_json()
         assert hello["kind"] == "hello"
         states = {snapshot["service"]: snapshot for snapshot in hello["states"]}
@@ -218,3 +206,36 @@ def test_action_ids_are_kebab_case_and_descriptions_default_to_docstrings() -> N
     assert action_id == "do-the-thing"
     assert meta.description == "Does the thing."
     assert issubclass(output, BaseModel)
+
+
+class _StopRecorder(Service[NoInput, NoInput]):
+    id = "recorder"
+    title = "Recorder"
+    description = "Remembers that it was stopped."
+    Config = NoInput
+    State = NoInput
+
+    def __init__(self, runtime: Runtime) -> None:
+        super().__init__(runtime)
+        self.stopped = False
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+def test_services_are_stopped_when_the_ready_callback_fails(data_paths: DataPaths) -> None:
+    runtime = Runtime(data_paths)
+    recorder = _StopRecorder(runtime)
+    runtime.register([recorder])
+
+    async def announce_failure(_runtime: Runtime) -> None:
+        raise RuntimeError("could not write the server file")
+
+    app = create_app(runtime, on_ready=announce_failure)
+    with (
+        pytest.raises(RuntimeError, match="could not write the server file"),
+        TestClient(app, base_url=LOOPBACK_URL),
+    ):
+        pytest.fail("the app must not come up when its ready callback fails")
+
+    assert recorder.stopped

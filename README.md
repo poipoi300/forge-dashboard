@@ -30,6 +30,13 @@ it streams prefixed logs instead of drawing the TUI.
 | `--only NAME ...` | manage a subset of services |
 | `--plain` | stream plain logs even on a terminal |
 
+The API answers only on this computer: it refuses requests whose `Host` or
+`Origin` is not a loopback address, so no web page you visit can drive it.
+To serve it to another machine, run the server with a non-loopback `--host`
+and name each address clients use with `--allow-host` (see
+`uv run -m forge_dashboard.server --help`); anyone who can reach it controls
+this machine.
+
 In the TUI: `s` start, `x` stop, `r` restart, `o` open the WebUI, `l` write
 the log to `logs/`, `a`/`z` start or stop all, `?` every key, `q` quit (stops
 everything it started).

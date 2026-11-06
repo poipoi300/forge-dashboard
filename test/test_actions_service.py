@@ -13,11 +13,12 @@ from testing_support import wait_for
 from forge_dashboard.core.events import EventEnvelope
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
-from forge_dashboard.core.service import ActionError, ProjectRef
+from forge_dashboard.core.service import ActionError
 from forge_dashboard.services import actions as actions_module
 from forge_dashboard.services.actions import (
     ActionsConfig,
     ActionsService,
+    ArtifactScope,
     CleanInput,
     HistoryInput,
     RunActionInput,
@@ -174,9 +175,13 @@ async def env(data_paths: DataPaths) -> AsyncIterator[Env]:
         await runtime.stop()
 
 
+BUILD_OUTPUT_IGNORES = ".venv/\nnode_modules/\ntarget/\n__pycache__/\n.pytest_cache/\ndist/\ncoverage/\nbuild/\n"
+
+
 @pytest.fixture
 async def alpha(env: Env, make_project: Callable[..., Path]) -> Path:
-    root = make_project("Alpha", manifest=MANIFEST + ACTIONS, extra={"scripts/act.py": SCRIPT})
+    extra = {"scripts/act.py": SCRIPT, ".gitignore": BUILD_OUTPUT_IGNORES}
+    root = make_project("Alpha", manifest=MANIFEST + ACTIONS, extra=extra)
     await env.add_project(root)
     await wait_for(lambda: bool(env.actions.state.projects))
     return root
@@ -286,6 +291,17 @@ async def test_a_running_required_service_is_exported_as_an_environment_variable
     assert "url http://127.0.0.1:5555" in await env.log(job_id)
 
 
+async def test_the_service_url_variable_is_named_by_the_env_key_project_services_also_uses(
+    env: Env, alpha: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(actions_module, "env_key", lambda service_id: f"RENAMED_{service_id}")
+    env.running_services[("alpha", "my-api")] = "http://127.0.0.1:5555"
+
+    job_id = await env.run("needs-api")
+
+    assert "url None" in await env.log(job_id), "the script looks for FORGE_SERVICE_URL_MY_API, which is no longer set"
+
+
 async def test_a_failing_action_fails_the_job_and_keeps_the_result_summary(env: Env, alpha: Path) -> None:
     async with env.runtime.bus.subscribe() as events:
         job_id = await env.run("fail")
@@ -390,7 +406,7 @@ def artifact_tree(alpha: Path) -> Path:
 
 
 async def test_artifact_sizes_reports_build_output_largest_first(env: Env, artifact_tree: Path) -> None:
-    sizes = await env.actions.artifact_sizes(ProjectRef(project_id="alpha"))
+    sizes = await env.actions.artifact_sizes(ArtifactScope(project_id="alpha"))
 
     assert [(artifact.path, artifact.kind, artifact.size_bytes) for artifact in sizes.artifacts] == [
         ("target", "target", 2000),
@@ -411,7 +427,9 @@ async def test_a_directory_with_tracked_files_is_not_an_artifact(env: Env, artif
     git(artifact_tree, "commit", "-q", "-m", "Track a build recipe")
     _write(artifact_tree / "coverage" / "lcov.info", 50)
 
-    paths = [artifact.path for artifact in (await env.actions.artifact_sizes(ProjectRef(project_id="alpha"))).artifacts]
+    paths = [
+        artifact.path for artifact in (await env.actions.artifact_sizes(ArtifactScope(project_id="alpha"))).artifacts
+    ]
 
     assert "build" not in paths and "coverage" in paths
 
@@ -428,7 +446,7 @@ async def test_links_are_neither_followed_nor_reported(env: Env, artifact_tree: 
     (artifact_tree / "dist").symlink_to(outside, target_is_directory=True)
     (artifact_tree / "target" / "linked").symlink_to(outside, target_is_directory=True)
 
-    sizes = await env.actions.artifact_sizes(ProjectRef(project_id="alpha"))
+    sizes = await env.actions.artifact_sizes(ArtifactScope(project_id="alpha"))
 
     paths = {artifact.path: artifact.size_bytes for artifact in sizes.artifacts}
     assert "packages/node_modules" not in paths and "dist" not in paths
@@ -437,9 +455,12 @@ async def test_links_are_neither_followed_nor_reported(env: Env, artifact_tree: 
 
 async def test_extra_artifact_directories_come_from_the_config(env: Env, artifact_tree: Path) -> None:
     _write(artifact_tree / "web" / ".next" / "cache", 64)
+    (artifact_tree / ".gitignore").write_text(BUILD_OUTPUT_IGNORES + ".next/\n", encoding="utf-8")
     await env.actions.update_config(ActionsConfig(extra_artifact_dirs=[".next"]))
 
-    paths = [artifact.path for artifact in (await env.actions.artifact_sizes(ProjectRef(project_id="alpha"))).artifacts]
+    paths = [
+        artifact.path for artifact in (await env.actions.artifact_sizes(ArtifactScope(project_id="alpha"))).artifacts
+    ]
 
     assert "web/.next" in paths
 
@@ -450,17 +471,126 @@ def test_the_config_refuses_names_that_are_not_plain_directories(name: str) -> N
         ActionsConfig(extra_artifact_dirs=[name])
 
 
-async def test_sizing_works_without_git(env: Env, tmp_path: Path) -> None:
+async def _sizes(env: Env, project_id: str = "alpha", *, allow_without_git: bool = False) -> list[str]:
+    scope = ArtifactScope(project_id=project_id, allow_without_git=allow_without_git)
+    return [artifact.path for artifact in (await env.actions.artifact_sizes(scope)).artifacts]
+
+
+@pytest.fixture
+async def plain(env: Env, tmp_path: Path) -> Path:
+    """A project that is not a git repository, with build output next to its source."""
     root = tmp_path / "plain-project"
     _write(root / "node_modules" / "x.js", 11)
+    _write(root / "dist" / "new_source.js", 3)
     (root / "forge.project.toml").write_text(
         MANIFEST.replace("{name}", "Plain").replace("{project_id}", "plain"), encoding="utf-8"
     )
     await env.add_project(root)
+    return root
 
-    sizes = await env.actions.artifact_sizes(ProjectRef(project_id="plain"))
 
-    assert [(artifact.path, artifact.size_bytes) for artifact in sizes.artifacts] == [("node_modules", 11)]
+async def test_a_project_without_git_offers_nothing_unless_the_request_opts_in(env: Env, plain: Path) -> None:
+    assert await _sizes(env, "plain") == []
+
+    sizes = await env.actions.artifact_sizes(ArtifactScope(project_id="plain", allow_without_git=True))
+    assert [(artifact.path, artifact.size_bytes) for artifact in sizes.artifacts] == [("node_modules", 11), ("dist", 3)]
+
+
+async def test_cleaning_a_project_without_git_needs_the_same_opt_in(env: Env, plain: Path) -> None:
+    with pytest.raises(ActionError, match="not reported by artifact sizes") as refused:
+        await env.actions.clean_artifacts(CleanInput(project_id="plain", paths=["node_modules"]))
+    assert refused.value.status == 422
+    assert (plain / "node_modules").is_dir()
+
+    cleaned = CleanInput(project_id="plain", paths=["node_modules"], allow_without_git=True)
+    summary = await env.jobs.wait((await env.actions.clean_artifacts(cleaned)).job_id)
+
+    assert summary.status is JobStatus.SUCCEEDED
+    assert not (plain / "node_modules").exists() and (plain / "dist" / "new_source.js").is_file()
+
+
+def test_the_opt_in_is_explained_in_the_forms_schema_and_off_by_default() -> None:
+    for model in (ArtifactScope, CleanInput):
+        field = model.model_json_schema()["properties"]["allow_without_git"]
+        assert field["default"] is False
+        assert "not a git repository" in field["x-ui"]["help"]
+    assert CleanInput(project_id="alpha", paths=["dist"]).allow_without_git is False
+
+
+async def test_a_directory_git_does_not_ignore_is_not_offered(env: Env, artifact_tree: Path) -> None:
+    assert "web/dist" in await _sizes(env)
+
+    (artifact_tree / ".gitignore").write_text(BUILD_OUTPUT_IGNORES.replace("dist/\n", ""), encoding="utf-8")
+
+    paths = await _sizes(env)
+    assert "web/dist" not in paths and "target" in paths
+
+
+async def test_new_source_beside_ignored_output_keeps_its_directory_out_of_the_offer(
+    env: Env, artifact_tree: Path
+) -> None:
+    (artifact_tree / ".gitignore").write_text("*.o\n", encoding="utf-8")
+    _write(artifact_tree / "build" / "main.o", 40)
+    _write(artifact_tree / "build" / "new_module.py", 10)
+    _write(artifact_tree / "dist" / "only.o", 5)
+
+    paths = await _sizes(env)
+
+    assert "build" not in paths, "an untracked, unignored file is work git would show as new"
+    assert "dist" in paths, "every file in it is ignored"
+
+
+async def test_a_cache_that_ignores_itself_is_offered_whatever_the_project_gitignore_says(
+    env: Env, artifact_tree: Path
+) -> None:
+    (artifact_tree / ".gitignore").write_text("", encoding="utf-8")
+    _write(artifact_tree / ".mypy_cache" / ".gitignore", 1)
+    (artifact_tree / ".mypy_cache" / ".gitignore").write_text("*\n", encoding="utf-8")
+    _write(artifact_tree / ".mypy_cache" / "3.12" / "m.json", 8)
+
+    paths = await _sizes(env)
+
+    assert ".mypy_cache" in paths and "target" not in paths
+
+
+async def test_rules_in_the_repositorys_exclude_file_count_as_ignored(env: Env, artifact_tree: Path) -> None:
+    (artifact_tree / ".gitignore").write_text("", encoding="utf-8")
+    (artifact_tree / ".git" / "info" / "exclude").write_text("target/\n", encoding="utf-8")
+
+    paths = await _sizes(env)
+
+    assert "target" in paths and "web/dist" not in paths
+
+
+async def test_clean_refuses_a_directory_git_does_not_ignore(env: Env, artifact_tree: Path) -> None:
+    (artifact_tree / ".gitignore").write_text("", encoding="utf-8")
+
+    with pytest.raises(ActionError, match="not reported by artifact sizes") as refused:
+        await env.actions.clean_artifacts(CleanInput(project_id="alpha", paths=["target"]))
+
+    assert refused.value.status == 422 and (artifact_tree / "target" / "debug" / "bin").is_file()
+
+
+async def test_a_nested_repository_and_its_build_output_are_left_alone(env: Env, artifact_tree: Path, git: Git) -> None:
+    _write(artifact_tree / "vendor" / "lib" / "node_modules" / "dep.js", 4)
+    git.init(artifact_tree / "vendor" / "lib")
+    _write(artifact_tree / "dist" / ".keep", 1)
+    git.init(artifact_tree / "dist")
+
+    paths = await _sizes(env)
+
+    assert "vendor/lib/node_modules" not in paths and "dist" not in paths and "target" in paths
+
+
+def test_artifact_search_skips_nested_repositories(tmp_path: Path) -> None:
+    for relative in ("node_modules", "sub/node_modules", "clone/node_modules", "dist"):
+        (tmp_path / relative).mkdir(parents=True)
+    (tmp_path / "clone" / ".git").mkdir()
+    (tmp_path / "dist" / ".git").write_text("gitdir: ../elsewhere", encoding="utf-8")
+
+    found = {path.relative_to(tmp_path).as_posix() for path in find_artifact_dirs(tmp_path, ["node_modules", "dist"])}
+
+    assert found == {"node_modules", "sub/node_modules"}
 
 
 async def test_clean_deletes_only_the_chosen_directories_and_reports_what_was_freed(
@@ -474,7 +604,7 @@ async def test_clean_deletes_only_the_chosen_directories_and_reports_what_was_fr
     assert (artifact_tree / ".venv").is_dir() and (artifact_tree / "src" / "main.py").is_file()
     assert (artifact_tree / "web" / "node_modules" / "pkg" / "index.js").is_file()
     assert await env.result(ref.job_id) == {"freed_bytes": 2300, "removed": ["target", "web/dist"]}
-    remaining = [a.path for a in (await env.actions.artifact_sizes(ProjectRef(project_id="alpha"))).artifacts]
+    remaining = [a.path for a in (await env.actions.artifact_sizes(ArtifactScope(project_id="alpha"))).artifacts]
     assert "target" not in remaining and ".venv" in remaining
 
 

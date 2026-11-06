@@ -246,11 +246,9 @@ class Backend(Protocol):
 
 
 class ServerInfo(BaseModel):
-    """What a running server writes to `server.json`."""
+    """What a running server writes to `server.json`: where to reach it."""
 
     url: str
-    pid: int
-    started_at: float
 
 
 async def running_server_url(paths: DataPaths) -> str | None:
@@ -284,6 +282,22 @@ def _failure_detail(response: httpx.Response) -> str:
     return detail if isinstance(detail, str) else json.dumps(detail if detail is not None else body)
 
 
+async def stream_job_log(
+    job_id: str, fetch: Callable[[JobLogInput], Awaitable[JobLogChunk]], emit: Callable[[str], None]
+) -> None:
+    """Pass a job's log lines to `emit` as they are written, returning once the job is done and its log read out."""
+    offset = 0
+    while True:
+        chunk = await fetch(JobLogInput(job_id=job_id, offset=offset))
+        for line in chunk.lines:
+            emit(line)
+        offset = chunk.next_offset
+        if chunk.done and not chunk.lines:
+            return
+        if not chunk.lines:
+            await asyncio.sleep(POLL_INTERVAL_S)
+
+
 class HttpBackend:
     def __init__(self, client: httpx.AsyncClient) -> None:
         self._client = client
@@ -300,21 +314,14 @@ class HttpBackend:
     async def projects(self) -> list[ProjectSummary]:
         return TypeAdapter(list[ProjectSummary]).validate_python(await self._send(self._client.get("/api/projects")))
 
+    async def _log_chunk(self, request: JobLogInput) -> JobLogChunk:
+        return JobLogChunk.model_validate(await self._post("jobs", "log", request.model_dump(mode="json")))
+
     async def run_job(
         self, service: str, action: str, payload: dict[str, JsonValue], emit: Callable[[str], None]
     ) -> JobSummary:
         job = JobRef.model_validate(await self._post(service, action, payload))
-        offset = 0
-        while True:
-            request = JobLogInput(job_id=job.job_id, offset=offset).model_dump(mode="json")
-            chunk = JobLogChunk.model_validate(await self._post("jobs", "log", request))
-            for line in chunk.lines:
-                emit(line)
-            offset = chunk.next_offset
-            if chunk.done and not chunk.lines:
-                break
-            if not chunk.lines:
-                await asyncio.sleep(POLL_INTERVAL_S)
+        await stream_job_log(job.job_id, self._log_chunk, emit)
         detail = JobDetail.model_validate(await self._post("jobs", "get", {"job_id": job.job_id}))
         return detail.job
 
@@ -351,15 +358,8 @@ class InProcessBackend:
         except ActionError as error:
             raise CliError(error.message, exit_code_for(error.status)) from error
         job = JobRef.model_validate(started.model_dump())
-        summary = await self._jobs.wait(job.job_id)
-        offset = 0
-        while True:
-            chunk = await self._jobs.log(JobLogInput(job_id=job.job_id, offset=offset))
-            for line in chunk.lines:
-                emit(line)
-            if not chunk.lines:
-                return summary
-            offset = chunk.next_offset
+        await stream_job_log(job.job_id, self._jobs.log, emit)
+        return await self._jobs.wait(job.job_id)
 
 
 @asynccontextmanager
@@ -374,8 +374,8 @@ async def open_backend(paths: DataPaths) -> AsyncIterator[Backend]:
     from forge_dashboard.container import build_runtime
 
     runtime = build_runtime(paths)
-    await runtime.start()
     try:
+        await runtime.start()
         backend = InProcessBackend(runtime)
         await backend.wait_until_loaded()
         yield backend

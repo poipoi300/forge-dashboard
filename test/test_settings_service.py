@@ -100,6 +100,7 @@ async def running(data_paths: DataPaths, calls: list[str]) -> AsyncIterator[Env]
     await runtime.open()
     await runtime.db.kv_put("config", "discovery", {"roots": [str(data_paths.root.parent / "no-projects-here")]})
     await runtime.start()
+    await wait_for(lambda: projects.state.loaded)  # the startup scan must finish before a test backs up the database
     try:
         yield Env(runtime, settings, projects, discovery, first, second, calls)
     finally:

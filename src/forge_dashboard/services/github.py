@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, JsonValue
 
 from forge_dashboard.core.events import Event, Severity
 from forge_dashboard.core.service import ActionError, Done, NoInput, ProjectRef, Service, action
+from forge_dashboard.core.tasks import BackgroundTasks, repeat
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain.summary import CiFacts, GitHubLink, IssueFacts
 from forge_dashboard.github.auth import (
@@ -365,23 +366,24 @@ class GitHubService(Service[GitHubConfig, GitHubState], ProjectListener):
         self._auth_lock = asyncio.Lock()
         self._announced: set[str] = set()
         self._wakeup = asyncio.Event()
-        self._poll_task: asyncio.Task[None] | None = None
+        self._background = BackgroundTasks()
         projects.listen(self)
 
     # --- lifecycle ---
 
     @override
     async def start(self) -> None:
-        self._poll_task = asyncio.create_task(self._poll_loop(), name="github-poll")
+        self._background.spawn(
+            repeat(self._poll_round, self._seconds_until_next_poll, label="GitHub poll", wake=self._wakeup),
+            "github-poll",
+        )
 
     @override
     async def stop(self) -> None:
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._poll_task
-        if self._api_client is not None:
-            await self._api_client.aclose()
+        await self._background.cancel_all()
+        client, self._api_client = self._api_client, None  # the next request builds a fresh one
+        if client is not None:
+            await client.aclose()
 
     @override
     async def on_config_changed(self, previous: GitHubConfig) -> None:
@@ -468,11 +470,9 @@ class GitHubService(Service[GitHubConfig, GitHubState], ProjectListener):
 
     # --- polling ---
 
-    async def _poll_loop(self) -> None:
+    async def _poll_round(self) -> None:
         await self._api()
-        while True:
-            await self.poll_due()
-            await self._sleep_until_next_poll()
+        await self.poll_due()
 
     async def poll_due(self) -> list[str]:
         """Refresh every project whose poll time has come; returns their ids."""
@@ -485,14 +485,12 @@ class GitHubService(Service[GitHubConfig, GitHubState], ProjectListener):
                 self.runtime.log.exception("GitHub poll of %s failed", project_id)
         return due
 
-    async def _sleep_until_next_poll(self) -> None:
+    def _seconds_until_next_poll(self) -> float:
         now = time.monotonic()
         delay = min(
             (t.due_at - now for t in self._tracked.values() if t.slug is not None), default=self.config.idle_poll_s
         )
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._wakeup.wait(), timeout=max(delay, POLL_FLOOR_S))
-        self._wakeup.clear()
+        return max(delay, POLL_FLOOR_S)
 
     def _wake(self, project_id: str | None = None) -> None:
         """Poll one project (or all) as soon as the loop is free."""

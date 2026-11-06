@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import re
 import time
 from collections import deque
@@ -36,6 +37,8 @@ from forge_dashboard.supervisor.policy import ACTIVE_STATES, ServiceState
 LOG_LINES_KEPT = 2000
 READINESS_POLL_S = 0.25
 DEPENDENCY_POLL_S = 0.1
+
+_logger = logging.getLogger("forge_dashboard.supervisor")
 
 
 @dataclass(frozen=True)
@@ -125,7 +128,9 @@ class ServiceSpec:
 
     Attributes:
         owner_root: Directory that identifies our own processes: a leftover
-            listener whose cwd or cmdline lies inside it may be reclaimed.
+            listener may be reclaimed only if its cwd or cmdline lies inside
+            it and this supervisor spawned it. Any other holder of a pinned
+            port blocks the service until the user confirms its release.
         plan: Renders the command from the resolved endpoint and the
             endpoints of `depends_on` providers.
     """
@@ -250,6 +255,9 @@ class SupervisedService:
     retry_at: float | None = None
     log_matched: bool = False
     blocked_by: ports.PortHolder | None = None
+    # (pid -> create_time) of every process this supervisor saw in the service's tree: the proof that a
+    # listener on a pinned port is our own leftover and not somebody else's process.
+    spawned: dict[int, float] = field(default_factory=dict)
     lifecycle: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def __post_init__(self) -> None:
@@ -327,6 +335,12 @@ class Supervisor:
             raise RuntimeError(f"service {spec.name!r} is running; stop it before replacing its spec")
         self.services[spec.name] = SupervisedService(spec=spec)
 
+    def remove(self, name: str) -> None:
+        """Forget a service that is not running; a running one must be stopped first."""
+        if self.services[name].state in ACTIVE_STATES:
+            raise RuntimeError(f"service {name!r} is running; stop it before removing it")
+        del self.services[name]
+
     # --- queries ---
 
     def snapshot(self) -> list[ServiceStatus]:
@@ -383,18 +397,55 @@ class Supervisor:
                     await service.task
             service.task = None
             service.retry_at = None
-            await self._terminate(service)
-            service.started_at = None
-            service.ready_at = None
+            try:
+                await self._terminate(service)
+            except asyncio.CancelledError:
+                self._set(service, ServiceState.FAILED, "stop was interrupted before it finished")
+                raise
+            except Exception as error:
+                detail = f"stop failed: {type(error).__name__}: {error}"
+                self._log(service, detail)
+                self._set(service, ServiceState.FAILED, detail)
+                self._emit(service, SupervisorEventKind.FAILED, detail)
+                raise
+            finally:
+                service.started_at = None
+                service.ready_at = None
             self._set(service, ServiceState.STOPPED, "stopped")
             self._emit(service, SupervisorEventKind.STOPPED, "stopped")
 
-    async def stop_all(self, timeout_s: float = 20.0) -> None:
-        """Stop every service concurrently under one bounded timeout."""
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(
-                asyncio.gather(*(self.stop(name) for name in self.services), return_exceptions=True), timeout_s
-            )
+    async def stop_all(self, timeout_s: float = 20.0) -> list[str]:
+        """Stop every service concurrently under one bounded timeout.
+
+        A service that fails to stop, or is still stopping when the timeout
+        ends, is logged to its own log and to the application log; the rest
+        are still stopped.
+
+        Returns:
+            The names of the services that did not stop cleanly, in registry order.
+        """
+        services = dict(self.services)  # a stop can unregister its service (see `remove`)
+        failures: dict[str, str] = {}
+        settled: set[str] = set()
+
+        async def stop_one(name: str) -> None:
+            try:
+                await self.stop(name)
+            except Exception as error:
+                failures[name] = f"{type(error).__name__}: {error}"
+                _logger.error("%s could not be stopped", name, exc_info=error)
+            settled.add(name)
+
+        try:
+            await asyncio.wait_for(asyncio.gather(*(stop_one(name) for name in services)), timeout_s)
+        except TimeoutError:
+            for name in services:
+                if name in settled:
+                    continue
+                failures[name] = f"still stopping after {timeout_s:.0f}s"
+                self._log(services[name], f"stop timed out: {failures[name]}")
+                _logger.error("%s: %s", name, failures[name])
+        return [name for name in services if name in failures]
 
     async def restart(self, name: str) -> None:
         await self.stop(name)
@@ -436,47 +487,66 @@ class Supervisor:
     # --- supervision loop ---
 
     async def _supervise(self, service: SupervisedService) -> None:
+        try:
+            await self._keep_running(service)
+        except _Fatal:
+            return
+        except Exception as error:
+            await self._fail_unexpectedly(service, error)
+
+    async def _fail_unexpectedly(self, service: SupervisedService, error: Exception) -> None:
+        """Park a service whose supervision crashed, so it never sits in "starting" with nobody watching it."""
+        _logger.error("supervising %s failed", service.spec.name, exc_info=error)
+        detail = f"{type(error).__name__}: {error}"
+        try:
+            await self._terminate(service)  # a child spawned before the error must not outlive it
+        finally:
+            service.started_at = None
+            service.ready_at = None
+            service.retry_at = None
+            self._log(service, f"unexpected error: {detail}")
+            self._set(service, ServiceState.FAILED, detail)
+            self._emit(service, SupervisorEventKind.FAILED, detail)
+
+    async def _keep_running(self, service: SupervisedService) -> None:
         delay: float | None = None
         build_delay: float | None = None
         first_attempt = True
-        try:
-            await self._start_dependencies(service)
-            while True:
-                if not first_attempt:
-                    service.restarts += 1
-                first_attempt = False
+        await self._start_dependencies(service)
+        while True:
+            if not first_attempt:
+                service.restarts += 1
+            first_attempt = False
 
-                if not await self._run_pre_steps(service):
-                    service.build_failures.append(self._clock())
-                    if not policy.should_retry_build(service.build_failures, self._clock(), service.autorestart):
-                        attempts = len(service.build_failures)
-                        self._set(service, ServiceState.BUILD_FAILED, f"build failed; gave up after {attempts} tries")
-                        self._emit(service, SupervisorEventKind.FAILED, service.detail)
-                        return
-                    build_delay = policy.next_delay(build_delay)
-                    await self._backoff(service, build_delay, "build failed")
-                    continue
-                build_delay = None
-                service.build_failures.clear()
-
-                exit_code, uptime_s = await self._run_once(service)
-                if service.stop_requested:
-                    return
-                if policy.run_was_healthy(uptime_s):
-                    service.crashes.clear()
-                    delay = None
-                service.crashes.append(self._clock())
-                reason = f"exited with code {exit_code}"
-                self._emit(service, SupervisorEventKind.CRASHED, reason)
-                if not policy.should_restart(service.crashes, self._clock(), service.autorestart):
-                    count = len(service.crashes)
-                    self._set(service, ServiceState.FAILED, f"{reason}; gave up after {count} crashes")
+            if not await self._run_pre_steps(service):
+                service.build_failures.append(self._clock())
+                if not policy.should_retry_build(service.build_failures, self._clock(), service.autorestart):
+                    attempts = len(service.build_failures)
+                    self._set(service, ServiceState.BUILD_FAILED, f"build failed; gave up after {attempts} tries")
                     self._emit(service, SupervisorEventKind.FAILED, service.detail)
                     return
-                delay = policy.next_delay(delay)
-                await self._backoff(service, delay, reason)
-        except _Fatal:
-            return
+                build_delay = policy.next_delay(build_delay)
+                await self._backoff(service, build_delay, "build failed")
+                continue
+            build_delay = None
+            service.build_failures.clear()
+
+            exit_code, uptime_s = await self._run_once(service)
+            if service.stop_requested:
+                return
+            if policy.run_was_healthy(uptime_s):
+                service.crashes.clear()
+                delay = None
+            service.crashes.append(self._clock())
+            reason = f"exited with code {exit_code}"
+            self._emit(service, SupervisorEventKind.CRASHED, reason)
+            if not policy.should_restart(service.crashes, self._clock(), service.autorestart):
+                count = len(service.crashes)
+                self._set(service, ServiceState.FAILED, f"{reason}; gave up after {count} crashes")
+                self._emit(service, SupervisorEventKind.FAILED, service.detail)
+                return
+            delay = policy.next_delay(delay)
+            await self._backoff(service, delay, reason)
 
     async def _start_dependencies(self, service: SupervisedService) -> None:
         for dependency in service.spec.depends_on:
@@ -509,6 +579,8 @@ class Supervisor:
                 )
             except tree.ExecutableNotFoundError as error:
                 self._park(service, ServiceState.FAILED, str(error))
+            except OSError as error:
+                self._park(service, ServiceState.FAILED, f"cannot run {step.argv[0]!r} in {step.cwd}: {error}")
             if not result.ok:
                 self._log(service, f"{step.label} failed with code {result.exit_code}")
                 return False
@@ -541,8 +613,9 @@ class Supervisor:
         if request.pinned is None:
             raise ValueError(f"{service.spec.name}: pinned port policy without a port")
         port = request.pinned
+        service.spawned = await asyncio.to_thread(ports.still_running, service.spawned)
         for holder in await asyncio.to_thread(ports.holders, [port]):
-            if holder.lives_inside(service.spec.owner_root) and holder.pid not in ports.protected_pids():
+            if self._is_own_leftover(service, holder):
                 self._log(service, f"reclaiming our leftover {holder.name} (pid {holder.pid}) on port {port}")
                 await asyncio.to_thread(ports.reclaim, holder)
                 continue
@@ -551,6 +624,27 @@ class Supervisor:
         if await asyncio.to_thread(ports.port_has_listener, port):
             self._park(service, ServiceState.BLOCKED, f"port {port} is still in use")
         return Endpoint(host, port)
+
+    @staticmethod
+    def _is_own_leftover(service: SupervisedService, holder: ports.PortHolder) -> bool:
+        """Whether `holder` is a process this supervisor spawned for the service (matched by creation time, not pid).
+
+        Anything else, including a process of the same project, is somebody's
+        work in progress and is only ever killed by a confirmed `release_and_start`.
+        """
+        return (
+            holder.verifiable
+            and holder.lives_inside(service.spec.owner_root)
+            and holder.pid not in ports.protected_pids()
+            and service.spawned.get(holder.pid) == holder.create_time
+        )
+
+    async def _remember_processes(self, service: SupervisedService) -> None:
+        """Record who is in the service's tree now, so a leftover can later be told from a stranger."""
+        handle = service.handle
+        if handle is None:
+            return
+        service.spawned.update(await asyncio.to_thread(lambda: ports.create_times(handle.tree_pids())))
 
     async def _run_once(self, service: SupervisedService) -> tuple[int, float]:
         """Spawn, watch readiness, and pump output until exit; returns (exit code, uptime)."""
@@ -565,11 +659,14 @@ class Supervisor:
             handle = await self._spawn(plan.argv, plan.cwd, tree.child_env(plan.env))
         except tree.ExecutableNotFoundError as error:
             self._park(service, ServiceState.FAILED, str(error))
+        except OSError as error:
+            self._park(service, ServiceState.FAILED, f"cannot start {plan.argv[0]!r} in {plan.cwd}: {error}")
         service.handle = handle
         service.started_at = self._wall()
         service.ready_at = None
         service.log_matched = False
         started = self._clock()
+        await self._remember_processes(service)
         self._log(
             service,
             f"started pid {handle.pid}" + (f" on port {service.endpoint.port}" if service.endpoint.port else ""),
@@ -581,6 +678,7 @@ class Supervisor:
                 self._append(service, line)
                 if pattern is not None and pattern.search(line):
                     service.log_matched = True
+            await self._remember_processes(service)
             exit_code = await handle.wait()
         finally:
             readiness.cancel()
@@ -593,6 +691,7 @@ class Supervisor:
 
     async def _watch_readiness(self, service: SupervisedService, previous_port: int | None) -> None:
         while service.handle is not None and service.handle.is_alive():
+            await self._remember_processes(service)
             if await self._probe(service):
                 service.ready_at = self._wall()
                 self._set(service, ServiceState.RUNNING, f"pid {service.handle.pid}")
@@ -612,6 +711,7 @@ class Supervisor:
                 task.add_done_callback(self._background.discard)
 
     async def _terminate(self, service: SupervisedService) -> None:
+        await self._remember_processes(service)
         handle, service.handle = service.handle, None
         if handle is None:
             return

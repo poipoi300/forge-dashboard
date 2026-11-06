@@ -6,12 +6,14 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
+from conftest import MANIFEST
 from testing_support import wait_for
 
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import ActionError, NoInput, ProjectRef
 from forge_dashboard.domain.summary import CheckFacts, HealthLevel, IssueFacts, Lifecycle
+from forge_dashboard.manifest import ProjectManifest, parse_manifest_text
 from forge_dashboard.services.discovery import ChangeKind, DiscoveryService, PathInput
 from forge_dashboard.services.jobs import JobsService
 from forge_dashboard.services.manifests import ManifestsService, ValidateTextInput
@@ -197,3 +199,47 @@ async def test_manifest_text_validation_reports_lines(data_paths: DataPaths) -> 
     assert not result.valid and any(issue.line == 2 for issue in result.issues)
     schema = await manifests.json_schema(NoInput())
     assert schema.model_dump(by_alias=True)["schema"]["title"] == "forge.project.toml"
+
+
+async def test_the_manifest_poll_survives_a_failing_round_and_restarts_after_a_stop(
+    registry: tuple[ProjectsService, DiscoveryService, Recorder],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    projects, _discovery, _recorder = registry
+    rounds: list[int] = []
+
+    async def flaky() -> list[str]:
+        rounds.append(len(rounds))
+        if len(rounds) == 1:
+            raise RuntimeError("the round broke")
+        return []
+
+    await projects.stop()
+    monkeypatch.setattr(projects, "poll_once", flaky)
+    projects.config = projects.config.model_copy(update={"poll_s": 0.02})  # below the config's own floor, for speed
+    await projects.start()
+    await wait_for(lambda: len(rounds) >= 3)
+    assert "manifest poll failed" in caplog.text
+
+
+def test_only_an_explicit_manifest_default_branch_is_declared(tmp_path: Path) -> None:
+    base = MANIFEST.replace("{name}", "Demo").replace("{project_id}", "demo")
+    implicit = parse_manifest_text(base).manifest
+    explicit = parse_manifest_text(base.replace('kind = "app"', 'kind = "app"\ndefault_branch = "trunk"')).manifest
+    assert implicit is not None and explicit is not None
+
+    def record(manifest: ProjectManifest | None) -> ProjectRecord:
+        return ProjectRecord(
+            id="demo",
+            path=tmp_path,
+            role="managed",
+            manifest=manifest,
+            manifest_issues=(),
+            has_manifest_file=manifest is not None,
+            is_git=True,
+        )
+
+    assert record(None).declared_default_branch is None
+    assert record(implicit).declared_default_branch is None
+    assert record(explicit).declared_default_branch == "trunk"

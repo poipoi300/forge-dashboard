@@ -3,7 +3,7 @@
 import asyncio
 import socket
 import sys
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 import httpx
@@ -16,7 +16,8 @@ from testing_support import wait_for
 from forge_dashboard.core.events import EventEnvelope
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
-from forge_dashboard.core.service import ActionError, NoInput, ProjectRef
+from forge_dashboard.core.service import ActionError, Done, NoInput, ProjectRef
+from forge_dashboard.process import ports
 from forge_dashboard.services.discovery import DiscoveryService, PathInput
 from forge_dashboard.services.jobs import JobIdInput, JobsService, JobStatus
 from forge_dashboard.services.manifests import ManifestsService
@@ -240,3 +241,189 @@ async def test_deployments_are_probed_over_http(
         router.get("https://demo.example.com/health").mock(side_effect=httpx.ConnectError("unreachable"))
         state = await services.check_deployments(NoInput())
     assert next(d for d in state.deployments if d.deployment_id == "prod").error == "unreachable"
+
+
+# --- the supervisor follows the manifest ---
+
+ServicesEnv = tuple[ProjectServicesService, ProjectsService, DiscoveryService, JobsService, Runtime]
+
+
+def _worker(service_id: str, generation: str) -> str:
+    """A portless service that prints its generation, so a log shows which manifest it was started from."""
+    script = f"print('generation {generation}', flush=True); import time; time.sleep(600)"
+    return f"""
+[[services]]
+id = "{service_id}"
+label = "{service_id.title()}"
+argv = ["{PYTHON}", "-c", "{script}"]
+"""
+
+
+def _manifest_text(*extra: str) -> str:
+    base: str = MANIFEST
+    return base.replace("{name}", "Svc").replace("{project_id}", "svc") + "".join(extra)
+
+
+def _lines_now(services: ProjectServicesService, service_id: str) -> list[str]:
+    return services._supervisors["svc"].log_lines(service_id)
+
+
+def _state_of(services: ProjectServicesService, service_id: str) -> str:
+    return next(status.state for status in services.state.services if status.service_id == service_id)
+
+
+async def _log_lines(services: ProjectServicesService, service_id: str) -> list[str]:
+    return (await services.logs(LogsInput(project_id="svc", service_id=service_id))).lines
+
+
+async def test_restart_runs_the_argv_the_manifest_has_now(
+    services_env: ServicesEnv, make_project: Callable[..., Path]
+) -> None:
+    services, projects, discovery, _jobs, _runtime = services_env
+    root = make_project("Svc", manifest=MANIFEST + _worker("worker", "one"))
+    await discovery.add_project(PathInput(path=str(root)))
+    worker = ServiceRef(project_id="svc", service_id="worker")
+    await services.start_service(worker)
+    await wait_for(lambda: _state_of(services, "worker") == "running")
+
+    manifest = root / "forge.project.toml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace("generation one", "generation two"), "utf-8")
+    await projects.refresh("svc")
+    assert _state_of(services, "worker") == "running"  # a running service is left alone
+
+    await services.restart_service(worker)
+    await wait_for(lambda: _state_of(services, "worker") == "running")
+    await wait_for(lambda: "generation two" in _lines_now(services, "worker"))
+    assert "generation one" not in _lines_now(services, "worker")
+    await services.stop_service(worker)
+
+
+async def test_a_service_dropped_from_the_manifest_leaves_the_supervisor_once_it_stops(
+    services_env: ServicesEnv, make_project: Callable[..., Path]
+) -> None:
+    services, projects, discovery, _jobs, _runtime = services_env
+    root = make_project("Svc", manifest=MANIFEST + _worker("worker", "one") + _worker("keeper", "one"))
+    await discovery.add_project(PathInput(path=str(root)))
+    worker = ServiceRef(project_id="svc", service_id="worker")
+    await services.start_service(worker)
+    await wait_for(lambda: _state_of(services, "worker") == "running")
+
+    (root / "forge.project.toml").write_text(_manifest_text(_worker("keeper", "one")), "utf-8")
+    await projects.refresh("svc")
+    assert await _log_lines(services, "worker")  # still supervised while it runs
+
+    await services.stop_service(worker)
+    with pytest.raises(ActionError, match="declares no service"):
+        await services.logs(LogsInput(project_id="svc", service_id="worker"))
+    assert await _log_lines(services, "keeper") == []
+
+
+async def test_a_service_dropped_from_the_manifest_while_stopped_leaves_at_once(
+    services_env: ServicesEnv, make_project: Callable[..., Path]
+) -> None:
+    services, projects, discovery, _jobs, _runtime = services_env
+    root = make_project("Svc", manifest=MANIFEST + _worker("worker", "one") + _worker("keeper", "one"))
+    await discovery.add_project(PathInput(path=str(root)))
+    (root / "forge.project.toml").write_text(_manifest_text(_worker("keeper", "one")), "utf-8")
+    await projects.refresh("svc")
+    with pytest.raises(ActionError, match="declares no service"):
+        await services.start_service(ServiceRef(project_id="svc", service_id="worker"))
+
+
+# --- a port holder the dashboard did not start is never killed without confirmation ---
+
+
+async def test_start_and_restart_leave_a_listener_the_dashboard_did_not_start_and_block_for_confirmation(
+    services_env: ServicesEnv, make_project: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    services, _projects, discovery, _jobs, _runtime = services_env
+    port = free_port()
+    pinned = f"""
+[[services]]
+id = "api"
+label = "API"
+argv = ["{PYTHON}", "scripts/listener.py", "{{port}}"]
+port = {{ policy = "pinned", port = {port}, evidence = "fixture client config" }}
+"""
+    project = _project(make_project, pinned)
+    await discovery.add_project(PathInput(path=str(project)))
+    api = ServiceRef(project_id="svc", service_id="api")
+    outside = await asyncio.create_subprocess_exec(
+        sys.executable, "scripts/listener.py", str(port), cwd=project, stdout=asyncio.subprocess.PIPE
+    )
+    try:
+        assert outside.stdout is not None
+        await outside.stdout.readline()
+        await services.scan_external(NoInput())  # the dashboard knows it as an external instance of the service
+
+        def held_lines() -> int:
+            return sum("is held by" in line for line in _lines_now(services, "api"))
+
+        async def blocked_again(action: Callable[[ServiceRef], Awaitable[Done]], times: int) -> None:
+            await action(api)
+            await wait_for(lambda: held_lines() == times)
+            assert outside.returncode is None
+
+        await blocked_again(services.start_service, 1)
+        await blocked_again(services.restart_service, 2)
+        await wait_for(lambda: _state_of(services, "api") == "blocked")
+        [blocked] = services.state.services
+        assert blocked.blocked_by is not None and blocked.external is not None
+
+        def refuse(holder: ports.PortHolder, timeout_s: float = 3.0) -> bool:
+            raise PermissionError(f"cannot verify process {holder.pid} (?): access denied")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ports, "reclaim", refuse)
+            with pytest.raises(ActionError, match="cannot verify process") as refused:
+                await services.release_port(api)
+        assert refused.value.status == 409 and outside.returncode is None
+
+        await services.release_port(api)
+        await wait_for(lambda: _state_of(services, "api") == "running")
+        await asyncio.wait_for(outside.wait(), 10)
+        await services.stop_service(api)
+    finally:
+        if outside.returncode is None:
+            outside.kill()
+        await outside.wait()
+
+
+# --- state publishing and stopping ---
+
+
+def test_a_change_reported_without_a_running_loop_fails_loudly_and_does_not_wedge_publishing(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = Runtime(data_paths)
+    jobs = JobsService(runtime)
+    projects = ProjectsService(runtime, DiscoveryService(runtime, jobs), ManifestsService(runtime))
+    services = ProjectServicesService(runtime, projects, jobs)
+    published: list[int] = []
+    monkeypatch.setattr(services, "_publish", lambda: published.append(1))
+
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        services._changed()
+
+    async def inside_a_loop() -> None:
+        services._changed()
+        services._changed()  # coalesced into the same publish
+        await asyncio.sleep(0)
+
+    asyncio.run(inside_a_loop())
+    assert published == [1]
+
+
+async def test_stop_all_names_the_services_that_would_not_stop(
+    services_env: ServicesEnv, make_project: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    services, _projects, discovery, _jobs, _runtime = services_env
+    await discovery.add_project(PathInput(path=str(_project(make_project))))
+
+    async def stuck(timeout_s: float = 20.0) -> list[str]:
+        return ["backend"]
+
+    monkeypatch.setattr(services._supervisors["svc"], "stop_all", stuck)
+    with pytest.raises(ActionError, match="could not stop: svc/backend") as failure:
+        await services.stop_all(NoInput())
+    assert failure.value.status == 500

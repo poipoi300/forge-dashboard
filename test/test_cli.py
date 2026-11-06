@@ -29,6 +29,7 @@ from forge_dashboard.cli import (
     descriptors_text,
     exit_code_for,
     main,
+    open_backend,
     openapi_text,
     paint,
     render_projects,
@@ -41,6 +42,7 @@ from forge_dashboard.cli import (
 from forge_dashboard.core.db import Database
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
+from forge_dashboard.core.service import JobRef, NoInput, Service, action
 from forge_dashboard.domain.summary import (
     AttentionItem,
     CheckFacts,
@@ -60,7 +62,7 @@ from forge_dashboard.domain.summary import (
 )
 from forge_dashboard.server import build_app
 from forge_dashboard.services.discovery import DiscoveryService
-from forge_dashboard.services.jobs import JobsService, JobStatus
+from forge_dashboard.services.jobs import JobContext, JobOutcome, JobsService, JobStatus
 from forge_dashboard.services.manifests import ManifestsService
 from forge_dashboard.services.projects import ProjectsService
 
@@ -301,6 +303,14 @@ def test_sync_runs_through_the_running_server(
     assert (repos.checkout / "upstream-only.txt").is_file()
 
 
+async def test_a_server_file_that_only_says_where_the_server_is_is_a_valid_description(tmp_path: Path) -> None:
+    paths = DataPaths(root=tmp_path / "data")
+    paths.ensure()
+    paths.server_file.write_text(json.dumps({"url": "http://127.0.0.1:1"}), encoding="utf-8")
+
+    assert await running_server_url(paths) is None
+
+
 async def test_the_server_file_is_only_trusted_while_the_server_answers(tmp_path: Path) -> None:
     paths = DataPaths(root=tmp_path / "data")
     assert await running_server_url(paths) is None
@@ -387,6 +397,99 @@ async def test_waiting_for_discovery_hints_once_and_gives_up(
 
     assert failure.value.exit_code == 1
     assert capsys.readouterr().err == "waiting for project discovery...\n"
+
+
+class GatedJobs(Service[NoInput, NoInput]):
+    """A job that logs a line, then waits for the test to see it before logging the last one."""
+
+    id = "gated"
+    title = "Gated"
+    description = "A job that cannot finish until its first log line has been read."
+    Config = NoInput
+    State = NoInput
+
+    def __init__(self, runtime: Runtime, jobs: JobsService) -> None:
+        super().__init__(runtime)
+        self._jobs = jobs
+        self.release = asyncio.Event()
+
+    @action(title="Run", long_running=True)
+    async def run(self, _request: NoInput) -> JobRef:
+        async def work(context: JobContext) -> JobOutcome:
+            context.log("first")
+            await self.release.wait()
+            context.log("second")
+            return JobOutcome(summary="finished")
+
+        return await self._jobs.submit(kind="gated.run", title="Gated", work=work)
+
+
+async def test_in_process_jobs_print_their_log_while_they_run(data_paths: DataPaths, tmp_path: Path) -> None:
+    runtime = Runtime(data_paths)
+    jobs = JobsService(runtime)
+    discovery = DiscoveryService(runtime, jobs)
+    manifests = ManifestsService(runtime)
+    projects = ProjectsService(runtime, discovery, manifests)
+    gated = GatedJobs(runtime, jobs)
+    runtime.register([jobs, manifests, projects, gated, discovery])
+    await runtime.open()
+    await runtime.db.kv_put("config", "discovery", {"roots": [str(tmp_path / "no-projects")]})
+    await runtime.start()
+    seen: list[str] = []
+
+    def emit(line: str) -> None:
+        seen.append(line)
+        if line == "first":
+            gated.release.set()
+
+    try:
+        summary = await asyncio.wait_for(InProcessBackend(runtime).run_job("gated", "run", {}, emit), timeout=30)
+    finally:
+        await runtime.stop()
+
+    assert seen == ["first", "second"]
+    assert (summary.status, summary.summary) == (JobStatus.SUCCEEDED, "finished")
+
+
+class StopRecorder(Service[NoInput, NoInput]):
+    id = "recorder"
+    title = "Recorder"
+    description = "Remembers that it was stopped."
+    Config = NoInput
+    State = NoInput
+
+    def __init__(self, runtime: Runtime) -> None:
+        super().__init__(runtime)
+        self.stopped = False
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+class FailingStart(Service[NoInput, NoInput]):
+    id = "failing"
+    title = "Failing"
+    description = "Cannot start."
+    Config = NoInput
+    State = NoInput
+
+    async def start(self) -> None:
+        raise RuntimeError("could not start")
+
+
+async def test_services_started_before_a_failing_start_are_stopped_again(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = Runtime(data_paths)
+    recorder = StopRecorder(runtime)
+    runtime.register([recorder, FailingStart(runtime)])
+    monkeypatch.setattr("forge_dashboard.container.build_runtime", lambda _paths: runtime)
+
+    with pytest.raises(RuntimeError, match="could not start"):
+        async with open_backend(data_paths):
+            pytest.fail("no backend may open over a runtime that did not start")
+
+    assert recorder.stopped
 
 
 # --- openapi ---

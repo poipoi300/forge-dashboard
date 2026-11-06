@@ -4,13 +4,16 @@ Entries live in SQLite, so they survive restarts. A run missed while the
 dashboard was down happens once on startup, never as a burst. Each run is
 jittered, a global pause stops dispatching, and the upcoming queue is part
 of the state. Concurrency limits belong to the jobs the actions submit.
+
+Nothing is dispatched until the services that entries target are ready
+(`targets_ready`); a run that came due while they were loading waits and then
+happens once.
 """
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import random
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar, override
 
@@ -18,7 +21,7 @@ from pydantic import BaseModel, Field, JsonValue
 
 from forge_dashboard.core.events import Event, Severity
 from forge_dashboard.core.service import ActionError, Done, JobRef, NoInput, Service, action
-from forge_dashboard.core.tasks import BackgroundTasks
+from forge_dashboard.core.tasks import BackgroundTasks, repeat
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain import scheduling
 from forge_dashboard.domain.scheduling import ManualSchedule, Schedule
@@ -93,6 +96,10 @@ def _stamp(moment: datetime | None) -> float | None:
     return moment.timestamp() if moment is not None else None
 
 
+def _always_ready() -> bool:
+    return True
+
+
 class SchedulerService(Service[SchedulerConfig, SchedulerState]):
     id = "scheduler"
     title = "Scheduler"
@@ -101,34 +108,39 @@ class SchedulerService(Service[SchedulerConfig, SchedulerState]):
     State = SchedulerState
     events = (ScheduledRunFailed,)
 
-    def __init__(self, runtime: Runtime, jobs: JobsService) -> None:
+    def __init__(
+        self, runtime: Runtime, jobs: JobsService, *, targets_ready: Callable[[], bool] = _always_ready
+    ) -> None:
+        """
+        Args:
+            targets_ready: Whether the services entries target can take work; no entry is dispatched before it holds.
+        """
         super().__init__(runtime)
         self._jobs = jobs
+        self._targets_ready = targets_ready
         self._entries: dict[str, ScheduleEntry] = {}
-        self._task: asyncio.Task[None] | None = None
         self._random = random.Random()
         self._background = BackgroundTasks()
+        jobs.on_finished(self._job_finished)
 
     @override
     async def start(self) -> None:
         rows = await self.runtime.db.fetch_all("SELECT entry FROM schedules")
         now = _now()
+        entries: dict[str, ScheduleEntry] = {}
         for row in rows:
             entry = ScheduleEntry.model_validate_json(row["entry"])
             next_at = datetime.fromtimestamp(entry.next_run_at, tz=UTC) if entry.next_run_at is not None else None
             caught_up = scheduling.catch_up(next_at, now)
-            self._entries[entry.id] = entry.model_copy(update={"next_run_at": _stamp(caught_up)})
-        self._jobs.on_finished(self._job_finished)
+            entries[entry.id] = entry.model_copy(update={"next_run_at": _stamp(caught_up)})
+        self._entries = entries
         self._publish_state()
-        self._task = asyncio.create_task(self._loop(), name="scheduler")
+        self._background.spawn(repeat(self._tick_now, lambda: TICK_S, label="scheduler tick"), "scheduler")
 
     @override
     async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
         await self._background.cancel_all()
+        self._entries = {}
 
     @override
     async def on_config_changed(self, previous: SchedulerConfig) -> None:
@@ -186,49 +198,58 @@ class SchedulerService(Service[SchedulerConfig, SchedulerState]):
         jitter = scheduling.draw_jitter(entry.max_jitter_s, self._random.uniform)
         return _stamp(scheduling.next_run_after(entry.schedule, after, jitter))
 
-    async def _loop(self) -> None:
-        while True:
-            await self.tick(_now())
-            await asyncio.sleep(TICK_S)
+    async def _tick_now(self) -> None:
+        await self.tick(_now())
+
+    def _candidate(self, entry: ScheduleEntry) -> tuple[str, datetime | None]:
+        next_at = datetime.fromtimestamp(entry.next_run_at, tz=UTC) if entry.next_run_at is not None else None
+        return entry.id, next_at
 
     async def tick(self, now: datetime) -> list[str]:
         """Dispatch every due entry; returns the ids dispatched."""
-        candidates = [
-            (entry.id, datetime.fromtimestamp(entry.next_run_at, tz=UTC) if entry.next_run_at is not None else None)
-            for entry in self._entries.values()
-            if entry.enabled
-        ]
+        if not self._targets_ready():
+            return []
+        candidates = [self._candidate(entry) for entry in self._entries.values() if entry.enabled]
         dispatched: list[str] = []
         for entry_id in scheduling.due(candidates, now, self.config.paused):
-            await self._dispatch(self._entries[entry_id], now)
+            # Dispatching awaits, so an entry can be removed, rescheduled, or paused meanwhile.
+            entry = self._entries.get(entry_id)
+            if entry is None or not scheduling.due([self._candidate(entry)], now, self.config.paused):
+                continue
+            await self._dispatch(entry, now)
             dispatched.append(entry_id)
         return dispatched
 
     async def _dispatch(self, entry: ScheduleEntry, now: datetime) -> None:
         job_id: str | None = None
         status: JobStatus | None = JobStatus.QUEUED
+        failure: str | None = None
         try:
             result = await self.runtime.invoke(entry.target_service, entry.target_action, entry.payload)
             job_id = result.job_id if isinstance(result, JobRef) else None
             if job_id is None:
                 status = JobStatus.SUCCEEDED
         except ActionError as error:
+            failure = error.message
+        except Exception as error:  # an action that crashes is a failed run, not the end of the schedule
+            self.runtime.log.exception("scheduled run %s crashed", entry.id)
+            failure = f"{type(error).__name__}: {error}"
+        if failure is not None:
             status = JobStatus.FAILED
             self.publish(
                 ScheduledRunFailed(
-                    project_id=entry.project_id,
-                    entry_id=entry.id,
-                    entry_title=entry.title,
-                    job_id=None,
-                    detail=error.message,
+                    project_id=entry.project_id, entry_id=entry.id, entry_title=entry.title, job_id=None, detail=failure
                 )
             )
-        updated = entry.model_copy(
+        current = self._entries.get(entry.id)
+        if current is None:  # removed while it was dispatching
+            return
+        updated = current.model_copy(
             update={
                 "last_run_at": now.timestamp(),
                 "last_job_id": job_id,
                 "last_status": status,
-                "next_run_at": self._next_for(entry, now),
+                "next_run_at": self._next_for(current, now),
             }
         )
         await self._save(updated)
@@ -238,7 +259,7 @@ class SchedulerService(Service[SchedulerConfig, SchedulerState]):
             if entry.last_job_id != summary.id:
                 continue
             self._entries[entry.id] = entry.model_copy(update={"last_status": summary.status})
-            self._background.spawn(self._save(self._entries[entry.id]), name=f"scheduler-save:{entry.id}")
+            self._background.spawn(self._persist(entry.id), name=f"scheduler-save:{entry.id}")
             if summary.status in (JobStatus.FAILED, JobStatus.ATTENTION):
                 self.publish(
                     ScheduledRunFailed(
@@ -252,11 +273,21 @@ class SchedulerService(Service[SchedulerConfig, SchedulerState]):
 
     async def _save(self, entry: ScheduleEntry) -> None:
         self._entries[entry.id] = entry
+        await self._write(entry)
+        self._publish_state()
+
+    async def _persist(self, entry_id: str) -> None:
+        """Write the entry's current form, unless it was removed in the meantime."""
+        entry = self._entries.get(entry_id)
+        if entry is not None:
+            await self._write(entry)
+            self._publish_state()
+
+    async def _write(self, entry: ScheduleEntry) -> None:
         await self.runtime.db.execute(
             "INSERT INTO schedules (id, entry) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET entry = excluded.entry",
             (entry.id, entry.model_dump_json()),
         )
-        self._publish_state()
 
     def _publish_state(self) -> None:
         entries = sorted(self._entries.values(), key=lambda e: (e.next_run_at is None, e.next_run_at or 0, e.title))

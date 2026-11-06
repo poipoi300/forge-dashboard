@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextlib
 import os
 import socket
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +20,9 @@ import psutil
 
 # PIDs that must never be killed to free a port: the System Idle Process and System on Windows.
 _SYSTEM_PIDS = frozenset({0, 4})
+# `PortHolder.create_time` of a process the OS refused to describe: its identity cannot be verified.
+UNVERIFIABLE_CREATE_TIME = 0.0
+_CONNECT_TIMEOUT_S = 0.5
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,11 @@ class PortHolder:
     cmdline: tuple[str, ...]
     cwd: str | None
     create_time: float
+
+    @property
+    def verifiable(self) -> bool:
+        """Whether `(pid, create_time)` identifies one process for good; a bare pid may be reused."""
+        return self.create_time != UNVERIFIABLE_CREATE_TIME
 
     def lives_inside(self, root: Path) -> bool:
         """Whether the holder's cwd or any cmdline path lies inside `root`."""
@@ -65,12 +73,12 @@ def path_is_within(candidate: str, root: Path) -> bool:
     return resolved == root.resolve() or root.resolve() in resolved.parents
 
 
-def listeners() -> list[Listener]:
-    """Every TCP socket in LISTEN state, on every address family."""
+def _system_listeners() -> list[Listener] | None:
+    """The OS-wide listener table, or None when the OS withholds it (macOS without root)."""
     try:
         connections = psutil.net_connections(kind="tcp")
     except psutil.AccessDenied:
-        return []
+        return None
     return [
         Listener(port=connection.laddr.port, address=connection.laddr.ip, pid=connection.pid)
         for connection in connections
@@ -78,9 +86,56 @@ def listeners() -> list[Listener]:
     ]
 
 
+def _process_listeners() -> list[Listener]:
+    """Listeners of every process we may inspect, for when the OS-wide table is withheld.
+
+    Sockets of other users' processes stay invisible.
+    """
+    found: list[Listener] = []
+    for process in psutil.process_iter():
+        try:
+            connections = process.net_connections(kind="tcp")
+        except psutil.Error:  # gone since the iteration began, or not ours to inspect
+            continue
+        found.extend(
+            Listener(port=connection.laddr.port, address=connection.laddr.ip, pid=process.pid)
+            for connection in connections
+            if connection.status == psutil.CONN_LISTEN and connection.laddr
+        )
+    return found
+
+
+def _accepts_connections(port: int) -> bool:
+    """Whether something answers a loopback connect on `port`."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=_CONNECT_TIMEOUT_S):
+            return True
+    except OSError:
+        return False
+
+
+def listeners() -> list[Listener]:
+    """Every TCP socket in LISTEN state, on every address family.
+
+    When the OS withholds the system-wide table, only the sockets of processes
+    we may inspect are listed; `port_has_listener` covers the rest with a
+    connect probe.
+    """
+    table = _system_listeners()
+    return table if table is not None else _process_listeners()
+
+
 def port_has_listener(port: int) -> bool:
-    """True if any process listens on `port` on any address, IPv4 or IPv6."""
-    return any(listener.port == port for listener in listeners())
+    """True if any process listens on `port` on any address, IPv4 or IPv6.
+
+    Without the system-wide table, a loopback connect probe also catches
+    listeners of processes we cannot inspect (those bound only to another
+    interface stay invisible).
+    """
+    table = _system_listeners()
+    if table is not None:
+        return any(listener.port == port for listener in table)
+    return any(listener.port == port for listener in _process_listeners()) or _accepts_connections(port)
 
 
 def _wildcard_bind_succeeds(port: int) -> bool:
@@ -151,7 +206,25 @@ def describe(pid: int, port: int) -> PortHolder | None:
     except psutil.NoSuchProcess:
         return None
     except psutil.AccessDenied:
-        return PortHolder(port=port, pid=pid, name="?", cmdline=(), cwd=None, create_time=0.0)
+        return PortHolder(port=port, pid=pid, name="?", cmdline=(), cwd=None, create_time=UNVERIFIABLE_CREATE_TIME)
+
+
+def create_times(pids: Iterable[int]) -> dict[int, float]:
+    """Creation time of each given pid that is running and inspectable.
+
+    A bare pid can be reused by another process; the `(pid, create_time)` pair cannot.
+    """
+    found: dict[int, float] = {}
+    for pid in pids:
+        with contextlib.suppress(psutil.Error):
+            found[pid] = psutil.Process(pid).create_time()
+    return found
+
+
+def still_running(identities: Mapping[int, float]) -> dict[int, float]:
+    """The `(pid, create_time)` pairs that still name a running process."""
+    current = create_times(identities)
+    return {pid: created for pid, created in identities.items() if current.get(pid) == created}
 
 
 def protected_pids() -> set[int]:
@@ -169,10 +242,12 @@ def reclaim(holder: PortHolder, timeout_s: float = 3.0) -> bool:
         Whether the holder is gone.
 
     Raises:
-        PermissionError: when the holder is a protected PID.
+        PermissionError: when the holder is a protected PID, or its identity cannot be verified.
     """
     if holder.pid in protected_pids():
         raise PermissionError(f"refusing to kill protected process {holder.pid} ({holder.name})")
+    if not holder.verifiable:
+        raise PermissionError(f"cannot verify process {holder.pid} ({holder.name}): access denied")
     try:
         process = psutil.Process(holder.pid)
         if process.create_time() != holder.create_time:

@@ -277,22 +277,36 @@ def parse_merge_tree(output: str, exit_code: int) -> MergeTreeResult:
     return MergeTreeResult(clean=False, tree=tree, conflicted_files=tuple(dict.fromkeys(files)), messages=messages)
 
 
-_GITHUB_REMOTE = re.compile(
-    r"^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)(?P<owner>[^/]+)/(?P<name>[^/]+?)(?:\.git)?/?$"
-)
+_URL_USERINFO = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<userinfo>[^/?#]*)@")
+_HTTP_SCHEMES = frozenset({"http", "https"})
 
 
-def github_slug(url: str) -> str | None:
-    """`owner/name` for a GitHub remote URL in any of its common forms; None otherwise."""
-    match = _GITHUB_REMOTE.match(url.strip())
-    return f"{match['owner']}/{match['name']}" if match else None
+def redact_url(url: str) -> str:
+    """`url` without the `user:token@` part of its authority; scp-like and path remotes carry no userinfo."""
+    return _URL_USERINFO.sub(r"\g<scheme>", url)
+
+
+def has_embedded_credentials(url: str) -> bool:
+    """Whether the URL carries a secret: a password anywhere, or any userinfo on http(s), where it is a token.
+
+    A login like the `git@` of `ssh://git@host/...` is not a secret.
+    """
+    match = _URL_USERINFO.match(url)
+    if match is None:
+        return False
+    scheme = match["scheme"].removesuffix("://").lower()
+    return ":" in match["userinfo"] or scheme in _HTTP_SCHEMES
 
 
 def parse_remotes(output: str) -> dict[str, str]:
-    """Parse `git remote -v` into remote name -> fetch URL."""
+    """Parse `git remote -v` into remote name -> fetch URL with any userinfo removed.
+
+    Nothing downstream (state, API, reports, logs, commit messages) may see a
+    token embedded in a remote; git commands that need the real URL address the remote by name.
+    """
     remotes: dict[str, str] = {}
     for line in output.splitlines():
         parts = line.split()
         if len(parts) >= 3 and parts[2] == "(fetch)":
-            remotes[parts[0]] = parts[1]
+            remotes[parts[0]] = redact_url(parts[1])
     return remotes

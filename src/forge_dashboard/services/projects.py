@@ -10,7 +10,6 @@ composes the `ProjectSummary` list the overview renders. User-owned state
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import re
 import socket
@@ -26,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from forge_dashboard.core.events import Event, Severity
 from forge_dashboard.core.service import ActionError, Done, NoInput, ProjectRef, Service, action
+from forge_dashboard.core.tasks import BackgroundTasks, repeat
 from forge_dashboard.core.ui import ui
 from forge_dashboard.domain import launch as launch_rules
 from forge_dashboard.domain import summary as rules
@@ -98,8 +98,15 @@ class ProjectRecord:
     is_git: bool
 
     @property
-    def default_branch(self) -> str:
-        return self.manifest.project.default_branch if self.manifest is not None else "main"
+    def declared_default_branch(self) -> str | None:
+        """The manifest's `default_branch` when it sets one explicitly; the contract default does not count.
+
+        Without one, work resolves the repository's own default (`gitops.default_branch`) instead
+        of assuming "main".
+        """
+        if self.manifest is None or "default_branch" not in self.manifest.project.model_fields_set:
+            return None
+        return self.manifest.project.default_branch
 
     @property
     def languages(self) -> list[str]:
@@ -289,7 +296,7 @@ class ProjectsService(Service[ProjectsConfig, ProjectsState]):
         self._settings: dict[str, ProjectSettings] = {}
         self._sync_lock = asyncio.Lock()
         self._manifest_mtimes: dict[str, float | None] = {}
-        self._poll_task: asyncio.Task[None] | None = None
+        self._background = BackgroundTasks()
         discovery.on_candidates(self._candidates_changed)
         discovery.on_change(self._files_changed)
 
@@ -298,19 +305,19 @@ class ProjectsService(Service[ProjectsConfig, ProjectsState]):
 
     @override
     async def start(self) -> None:
-        self._poll_task = asyncio.create_task(self._poll_loop(), name="projects-poll")
+        self._background.spawn(
+            repeat(
+                self.poll_once,
+                lambda: self.config.poll_s,
+                label="manifest poll",
+                first_run_after_s=self.config.poll_s,
+            ),
+            "projects-poll",
+        )
 
     @override
     async def stop(self) -> None:
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._poll_task
-
-    async def _poll_loop(self) -> None:
-        while True:
-            await asyncio.sleep(self.config.poll_s)
-            await self.poll_once()
+        await self._background.cancel_all()
 
     async def poll_once(self) -> list[str]:
         """Reload every manifest whose modification time changed since it was last read; returns their ids."""

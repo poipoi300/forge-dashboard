@@ -7,8 +7,10 @@ one JSON document, and the exit code decides success. The command may describe
 what it did in a JSON file named by `$FORGE_ACTION_RESULT`.
 
 Cleaning deletes only directories that `artifact-sizes` reported for the same
-project, never follows links, and never offers a directory holding tracked
-files.
+project and never follows links. In a git project a directory is offered only
+when git ignores everything inside it: a tracked file, or a file git would list
+as untracked, keeps it out. Without git nothing tells build output from source,
+so nothing is offered unless the request opts in.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from forge_dashboard.manifest.models import Action as ManifestAction
 from forge_dashboard.manifest.models import ActionResult
 from forge_dashboard.process import tree
 from forge_dashboard.services.jobs import JobContext, JobList, JobListInput, JobOutcome, JobsService, JobStatus
+from forge_dashboard.services.project_services import env_key
 from forge_dashboard.services.projects import ProjectListener, ProjectRecord, ProjectsService
 
 if TYPE_CHECKING:
@@ -142,8 +145,20 @@ class ArtifactSizes(BaseModel):
     artifacts: list[Artifact] = Field(json_schema_extra=ui(columns=["path", "kind", "size_bytes"]))
 
 
-class CleanInput(BaseModel):
-    project_id: str = Field(json_schema_extra=ui(hidden=True, bind="project"))
+class ArtifactScope(ProjectRef):
+    """Which project's build output to look at, and whether a project without git may be searched."""
+
+    allow_without_git: bool = Field(
+        False,
+        json_schema_extra=ui(
+            help="Only used for a project that is not a git repository. Git is what tells build output from source, "
+            "so without it nothing is offered unless this is set; then every directory named like build output is, "
+            "whatever it holds."
+        ),
+    )
+
+
+class CleanInput(ArtifactScope):
     paths: list[str] = Field(
         min_length=1, json_schema_extra=ui(widget="multiselect", help="Paths reported by Artifact sizes.")
     )
@@ -182,7 +197,11 @@ class ActionRan(Event):
 
 
 def find_artifact_dirs(root: Path, names: Iterable[str]) -> list[Path]:
-    """Directories under `root` named like build output; links and `.git` are never entered or reported."""
+    """Directories under `root` named like build output.
+
+    Links and `.git` are never entered or reported, and neither is a nested repository (a submodule or a vendored
+    clone): its files answer to its own git history and ignore rules, not to the project's.
+    """
     wanted = frozenset(names)
     found: list[Path] = []
     pending = [(root, 0)]
@@ -195,6 +214,8 @@ def find_artifact_dirs(root: Path, names: Iterable[str]) -> list[Path]:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
                 child = Path(entry.path)
+                if (child / ".git").exists():
+                    continue
                 if entry.name in wanted and (depth < ARTIFACT_SEARCH_DEPTH or entry.name in UNBOUNDED_ARTIFACT_DIRS):
                     found.append(child)
                 else:
@@ -350,7 +371,7 @@ class ActionsService(Service[ActionsConfig, ActionsState], ProjectListener):
                 f"action {declared.id!r} needs the service {declared.requires_service!r} to be running; start it first",
                 status=409,
             )
-        return {f"FORGE_SERVICE_URL_{declared.requires_service.upper().replace('-', '_')}": url}
+        return {f"FORGE_SERVICE_URL_{env_key(declared.requires_service)}": url}
 
     @action(title="Run action", long_running=True)
     async def run(self, request: RunActionInput) -> JobRef:
@@ -446,12 +467,14 @@ class ActionsService(Service[ActionsConfig, ActionsState], ProjectListener):
 
     # --- built-in: clean build artifacts ---
 
-    async def _artifacts(self, record: ProjectRecord) -> list[Artifact]:
+    async def _artifacts(self, record: ProjectRecord, *, allow_without_git: bool) -> list[Artifact]:
+        if not record.is_git and not allow_without_git:
+            return []
         names = (*ARTIFACT_DIRS, *self.config.extra_artifact_dirs)
         found = await asyncio.to_thread(find_artifact_dirs, record.path, names)
         if record.is_git and found:
-            tracked = await self._holding_tracked_files(record, found)
-            found = [directory for directory in found if directory not in tracked]
+            occupied = await self._holding_project_files(record, found)
+            found = [directory for directory in found if directory not in occupied]
         sizes = await asyncio.to_thread(lambda: [directory_size(directory) for directory in found])
         artifacts = [
             Artifact(path=directory.relative_to(record.path).as_posix(), kind=directory.name, size_bytes=size)
@@ -460,23 +483,22 @@ class ActionsService(Service[ActionsConfig, ActionsState], ProjectListener):
         return sorted(artifacts, key=lambda artifact: (-artifact.size_bytes, artifact.path))
 
     @staticmethod
-    async def _holding_tracked_files(record: ProjectRecord, directories: list[Path]) -> set[Path]:
-        """Candidates containing files git tracks: deleting them would show up as changes in the working tree."""
-        listing = await gitops.run(record.path, "ls-files", "-z")
-        tracked_directories = {
+    async def _holding_project_files(record: ProjectRecord, directories: list[Path]) -> set[Path]:
+        """Candidates holding a file git tracks or one it would list as untracked: deleting those loses work.
+
+        What remains is directories whose every file git ignores, which the project has declared not to be source.
+        """
+        listing = await gitops.run(record.path, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+        occupied = {
             parent.as_posix() for file in listing.stdout.split("\0") if file for parent in PurePosixPath(file).parents
         }
-        return {
-            directory
-            for directory in directories
-            if directory.relative_to(record.path).as_posix() in tracked_directories
-        }
+        return {directory for directory in directories if directory.relative_to(record.path).as_posix() in occupied}
 
     @action(title="Artifact sizes", query=True)
-    async def artifact_sizes(self, request: ProjectRef) -> ArtifactSizes:
+    async def artifact_sizes(self, request: ArtifactScope) -> ArtifactSizes:
         """Sizes of the project's build output and caches (.venv, node_modules, target, caches, dist, ...)."""
         record = self._projects.record(request.project_id)
-        artifacts = await self._artifacts(record)
+        artifacts = await self._artifacts(record, allow_without_git=request.allow_without_git)
         return ArtifactSizes(
             project_id=record.id, total_bytes=sum(artifact.size_bytes for artifact in artifacts), artifacts=artifacts
         )
@@ -485,7 +507,10 @@ class ActionsService(Service[ActionsConfig, ActionsState], ProjectListener):
     async def clean_artifacts(self, request: CleanInput) -> JobRef:
         """Delete build artifact directories; only paths that Artifact sizes reports for this project are accepted."""
         record = self._projects.record(request.project_id)
-        reported = {artifact.path: artifact for artifact in await self._artifacts(record)}
+        reported = {
+            artifact.path: artifact
+            for artifact in await self._artifacts(record, allow_without_git=request.allow_without_git)
+        }
         unknown = [path for path in request.paths if path not in reported]
         if unknown:
             raise ActionError(f"not reported by artifact sizes for {record.id}: {', '.join(unknown)}", status=422)

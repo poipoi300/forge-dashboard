@@ -8,7 +8,10 @@ branch, open a PR, or discard. This module stores those runs and lands them.
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -21,6 +24,7 @@ from forge_dashboard.core.service import ActionError
 from forge_dashboard.core.ui import ui
 
 BranchRunKind = Literal["standards", "adopt", "delegate", "update-deps"]
+INTERRUPTED = "interrupted by a dashboard restart"
 
 
 class BranchRunState(StrEnum):
@@ -123,28 +127,88 @@ class BranchWork:
         branch = await unique_branch(repo, f"{branch_prefix}/{worktrees.timestamp()}")
         path = worktrees.worktree_path(self._worktree_root, project_id, branch)
         worktree = await worktrees.create(repo, path, base=base_sha, branch=branch)
-        now = time.time()
-        run = BranchRun(
-            id=0,
-            project_id=project_id,
-            kind=kind,
-            title=title,
-            branch=branch,
-            worktree=str(path),
-            base_branch=base_branch,
-            base_sha=base_sha,
-            state=BranchRunState.RUNNING,
-            created_at=now,
-            updated_at=now,
-            job_id=job_id,
-        )
-        run_id = await self._db.execute(
-            "INSERT INTO branch_runs (project_id, kind, job_id, started_at, state, record) VALUES (?,?,?,?,?,?)",
-            (project_id, kind, job_id, now, run.state, run.model_dump_json()),
-        )
-        run = run.model_copy(update={"id": run_id})
-        await self.save(run)
+        try:
+            now = time.time()
+            run = BranchRun(
+                id=0,
+                project_id=project_id,
+                kind=kind,
+                title=title,
+                branch=branch,
+                worktree=str(path),
+                base_branch=base_branch,
+                base_sha=base_sha,
+                state=BranchRunState.RUNNING,
+                created_at=now,
+                updated_at=now,
+                job_id=job_id,
+            )
+            run_id = await self._db.execute(
+                "INSERT INTO branch_runs (project_id, kind, job_id, started_at, state, record) VALUES (?,?,?,?,?,?)",
+                (project_id, kind, job_id, now, run.state, run.model_dump_json()),
+            )
+            run = await self.save(run.model_copy(update={"id": run_id}))
+        except BaseException:
+            await worktrees.remove(worktree, delete_branch=True)
+            raise
         return run, worktree
+
+    @asynccontextmanager
+    async def guarded(
+        self, run: BranchRun, repo: Path, *, on_change: Callable[[BranchRun], Awaitable[None]] | None = None
+    ) -> AsyncIterator[None]:
+        """Whatever ends the work on `run` early, the run is not left `running` with nothing able to stop it.
+
+        A failure records the error and keeps the worktree and branch, so the
+        work can be inspected and discarded. A cancellation discards the run:
+        the user stopped it. A run the work already moved on (`finish`) stays as recorded.
+        """
+        try:
+            yield
+        except asyncio.CancelledError:
+            await self._end_unfinished(run.id, repo, BranchRunState.DISCARDED, "cancelled", on_change, remove=True)
+            raise
+        except Exception as error:
+            await self._end_unfinished(
+                run.id, repo, BranchRunState.FAILED, worktrees.describe_failure(error), on_change, remove=False
+            )
+            raise
+
+    async def _end_unfinished(
+        self,
+        run_id: int,
+        repo: Path,
+        state: BranchRunState,
+        error: str,
+        on_change: Callable[[BranchRun], Awaitable[None]] | None,
+        *,
+        remove: bool,
+    ) -> None:
+        current = await self.get(run_id)
+        if current.state is not BranchRunState.RUNNING:
+            return
+        if remove:
+            await worktrees.remove(
+                worktrees.Worktree(repo=repo, path=Path(current.worktree), branch=current.branch), delete_branch=True
+            )
+        ended = await self.save(current.model_copy(update={"state": state, "error": error}))
+        if on_change is not None:
+            await on_change(ended)
+
+    async def fail_interrupted(self) -> None:
+        """Runs still `running` at startup lost their job: fail them, keeping their worktrees to inspect or discard."""
+        rows = await self._db.fetch_all("SELECT record FROM branch_runs WHERE state = ?", (BranchRunState.RUNNING,))
+        for row in rows:
+            run = BranchRun.model_validate_json(row["record"])
+            await self.save(run.model_copy(update={"state": BranchRunState.FAILED, "error": INTERRUPTED}))
+
+    async def referenced_worktrees(self) -> list[Path]:
+        """Worktree directories that runs still own: every run not yet merged or discarded."""
+        rows = await self._db.fetch_all(
+            "SELECT json_extract(record, '$.worktree') AS worktree FROM branch_runs WHERE state NOT IN (?, ?)",
+            (BranchRunState.MERGED, BranchRunState.DISCARDED),
+        )
+        return [Path(row["worktree"]) for row in rows]
 
     async def save(self, run: BranchRun) -> BranchRun:
         stamped = run.model_copy(update={"updated_at": time.time()})
@@ -202,9 +266,10 @@ class BranchWork:
         """Fast-forward the base branch to the run's branch, then remove the worktree and branch.
 
         Raises:
-            ActionError: when the base branch moved on (not a fast-forward) or is
-                checked out with local changes; the run stays ready.
+            ActionError: when the base branch moved on (not a fast-forward), is checked
+                out with local changes, or git refuses the update; the run stays ready.
         """
+        run = await self.get(run.id)
         if run.state is not BranchRunState.READY:
             raise ActionError(f"run is {run.state.value}, not ready to merge", status=409)
         tip = (await gitops.output(repo, "rev-parse", f"refs/heads/{run.branch}")).strip()
@@ -213,6 +278,11 @@ class BranchWork:
             raise ActionError(
                 f"{run.base_branch} is checked out with local changes at {result.checkout}; "
                 "commit or stash them there, then merge again (the branch is kept)",
+                status=409,
+            )
+        if result.outcome == "refused":
+            raise ActionError(
+                f"git refused to move {run.base_branch} to {run.branch}: {result.detail} (the branch is kept)",
                 status=409,
             )
         if result.outcome != "updated":
@@ -228,6 +298,9 @@ class BranchWork:
 
     async def discard(self, run: BranchRun, repo: Path) -> BranchRun:
         """Remove the worktree and delete the branch."""
+        run = await self.get(run.id)
+        if run.state is BranchRunState.RUNNING:
+            raise ActionError("the run is still running; cancel its job first", status=409)
         if run.state in (BranchRunState.MERGED, BranchRunState.DISCARDED):
             raise ActionError(f"run is already {run.state.value}", status=409)
         await worktrees.remove(

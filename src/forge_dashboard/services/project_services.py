@@ -11,9 +11,9 @@ inside the project) show as `running (external)`, not as stopped.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, override
 
 import httpx
@@ -54,6 +54,10 @@ if TYPE_CHECKING:
 
 LAUNCH_TIMEOUT_S = 180
 RESERVED_PORTS = (8000, 8317)
+# A service in these states keeps the spec it started with; it is re-synced once it settles.
+_BUSY_STATES = ACTIVE_STATES | {ServiceState.STOPPING}
+# Supervisor events after which a service is no longer running.
+_SETTLED_EVENTS = frozenset({SupervisorEventKind.STOPPED, SupervisorEventKind.FAILED, SupervisorEventKind.BLOCKED})
 
 
 def env_key(service_id: str) -> str:
@@ -217,6 +221,9 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
         self._projects = projects
         self._jobs = jobs
         self._supervisors: dict[str, Supervisor] = {}
+        self._records: dict[str, ProjectRecord] = {}
+        # What each supervisor's spec was built from, to tell an edited service from an unchanged one.
+        self._spec_sources: dict[str, dict[str, tuple[Path, ManifestService]]] = {}
         self._external: dict[tuple[str, str], ExternalInstance] = {}
         self._deployments: dict[tuple[str, str], DeploymentStatus] = {}
         self._background = BackgroundTasks()
@@ -239,38 +246,71 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
     @override
     async def stop(self) -> None:
         await self._background.cancel_all()
-        await asyncio.gather(*(supervisor.stop_all() for supervisor in self._supervisors.values()))
+        await self._stop_every_service()
+
+    async def _stop_every_service(self) -> list[str]:
+        """Stop every supervised service; returns `project/service` for each that did not stop cleanly."""
+        project_ids = list(self._supervisors)
+        outcomes = await asyncio.gather(*(self._supervisors[project_id].stop_all() for project_id in project_ids))
+        return [
+            f"{project_id}/{service_id}"
+            for project_id, failed in zip(project_ids, outcomes, strict=True)
+            for service_id in failed
+        ]
 
     # --- registry hooks ---
 
     @override
     async def project_upserted(self, record: ProjectRecord) -> None:
-        services = record.manifest.services if record.manifest is not None else []
-        supervisor = self._supervisors.get(record.id)
-        if supervisor is None:
-            if not services:
+        self._records[record.id] = record
+        if record.id not in self._supervisors:
+            if not (record.manifest is not None and record.manifest.services):
                 self._publish()
                 return
-            supervisor = Supervisor(
+            self._supervisors[record.id] = Supervisor(
                 [],
                 log_tag="dashboard",
                 on_change=self._changed,
                 on_event=self._event_handler(record.id),
                 reserved_ports=RESERVED_PORTS,
             )
-            self._supervisors[record.id] = supervisor
-        for service in services:
-            existing = supervisor.services.get(service.id)
-            if existing is None or existing.state not in ACTIVE_STATES:
-                supervisor.add(self._spec(record, service))
+        self._sync_specs(record.id)
         self._publish()
 
     @override
     async def project_removed(self, project_id: str) -> None:
         supervisor = self._supervisors.pop(project_id, None)
+        self._records.pop(project_id, None)
+        self._spec_sources.pop(project_id, None)
         if supervisor is not None:
             await supervisor.stop_all()
         self._publish()
+
+    def _sync_specs(self, project_id: str) -> None:
+        """Make the supervisor's services match the project's manifest, except those still running.
+
+        A running service keeps the spec it started with. It is synced again
+        when it settles, so Restart runs the edited argv and port, and a service
+        dropped from the manifest leaves the supervisor once it has stopped.
+        """
+        record = self._records.get(project_id)
+        supervisor = self._supervisors.get(project_id)
+        if record is None or supervisor is None:
+            return
+        declared = {service.id: service for service in (record.manifest.services if record.manifest else [])}
+        sources = self._spec_sources.setdefault(project_id, {})
+        for service_id in list(supervisor.services):
+            if service_id not in declared and supervisor.services[service_id].state not in _BUSY_STATES:
+                supervisor.remove(service_id)
+                del sources[service_id]
+        for service_id, service in declared.items():
+            supervised = supervisor.services.get(service_id)
+            if supervised is not None and (
+                supervised.state in _BUSY_STATES or sources[service_id] == (record.path, service)
+            ):
+                continue
+            supervisor.add(self._spec(record, service))
+            sources[service_id] = (record.path, service)
 
     @override
     async def files_changed(self, record: ProjectRecord, kinds: frozenset[ChangeKind]) -> None:
@@ -315,9 +355,9 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
         # Supervisors report every log line; coalesce into one state publish per loop turn.
         if self._dirty:
             return
+        loop = asyncio.get_running_loop()
         self._dirty = True
-        with contextlib.suppress(RuntimeError):
-            asyncio.get_running_loop().call_soon(self._publish)
+        loop.call_soon(self._publish)
 
     def _event_handler(self, project_id: str) -> Callable[[SupervisorEvent], None]:
         def handle(event: SupervisorEvent) -> None:
@@ -331,6 +371,8 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
         elif event.kind is SupervisorEventKind.READY:
             status = self._supervisors[project_id].status(event.service)
             self.publish(ServiceStarted(project_id=project_id, service_id=event.service, url=status.url))
+        if event.kind in _SETTLED_EVENTS:
+            self._sync_specs(project_id)
 
     def _statuses(self) -> list[ProjectServiceStatus]:
         statuses: list[ProjectServiceStatus] = []
@@ -350,7 +392,8 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
                 url, port, pid, started = (
                     (status.url, status.port, status.pid, status.started_at) if status else (None, None, None, None)
                 )
-                if external is not None and (status is None or status.state not in ACTIVE_STATES):
+                blocked = status is not None and status.state is ServiceState.BLOCKED
+                if external is not None and not blocked and (status is None or status.state not in ACTIVE_STATES):
                     state, owner, port, pid = "external", "external", external.port, external.pid
                     url = (
                         Endpoint(service.host, external.port).url(service.open or "/")
@@ -523,7 +566,11 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
     @action(title="Free port and start", danger=True, confirm=True)
     async def release_port(self, request: ServiceRef) -> Done:
         """Kill the foreign process holding this service's pinned port, then start the service."""
-        await self._supervisor(request.project_id, request.service_id).release_and_start(request.service_id)
+        supervisor = self._supervisor(request.project_id, request.service_id)
+        try:
+            await supervisor.release_and_start(request.service_id)
+        except PermissionError as error:
+            raise ActionError(str(error), status=409) from error
         return Done(message="starting")
 
     @action(title="Launch", long_running=True)
@@ -563,7 +610,9 @@ class ProjectServicesService(Service[ProjectServicesConfig, ProjectServicesState
     @action(title="Stop all services", confirm=True)
     async def stop_all(self, _request: NoInput) -> Done:
         """Stop every service the dashboard started, in every project."""
-        await asyncio.gather(*(supervisor.stop_all() for supervisor in self._supervisors.values()))
+        failed = await self._stop_every_service()
+        if failed:
+            raise ActionError(f"could not stop: {', '.join(failed)}", status=500)
         return Done(message="stopped all")
 
     @action(title="Service log", query=True)

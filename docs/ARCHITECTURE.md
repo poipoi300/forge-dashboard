@@ -122,8 +122,21 @@ to their section.
 - **Restore is phased.** Stop every service, restore the database, reload
   every config, start every service, after writing a safety backup; this
   keeps `Runtime`'s rule that all configs load before any `start()`.
-- **Build output is offered for cleanup only when git tracks nothing inside
-  it**, so a committed `dist/` is never deleted.
+- **Build output is offered for cleanup only when git ignores everything in
+  it.** "Git tracks nothing inside" still offered an untracked `build/` holding
+  new source; now every file must be ignored, nested repositories are skipped,
+  and a project without git offers nothing unless the request opts in.
+- **Services restart.** `start()` after `stop()` is part of the `Service`
+  contract, because restore stops and starts every service; services that
+  register hooks do it once in `__init__`, and loops run under
+  `core.tasks.repeat`, which logs a failing round and keeps going.
+- **Scheduled catch-up waits for projects.** A schedule that came due while
+  the dashboard was off runs once the project registry has loaded
+  (`targets_ready`), not before, when its project does not exist yet.
+- **The database serializes writes.** A write is its statement plus its
+  commit under one lock, and snapshots (`VACUUM INTO`) and restores take the
+  same lock: a snapshot landing between another task's statement and commit
+  deadlocked the shared connection.
 - **Per-project overrides live in dashboard state.** Check schedules, fork
   policies, editor commands, hidden flags, and metric interval overrides are
   kv entries keyed by project id; the manifest stays the default and is never
@@ -141,6 +154,55 @@ to their section.
   ever written, and readers pass that cursor back.
 - **Check facts carry one result.** `not run yet`, `running`, `passing`, or
   `failing`, so a card can say "tests passing" without reading counts.
+- **Attention means a decision.** Failing health reasons, parked fork syncs,
+  and a blocked status count; standards drift and checks stale against HEAD
+  stay in health and their own signals. Counting the backlog flagged nearly
+  every project and ranked nothing.
+
+## Safety
+
+- **The API answers only to loopback.** It runs code on this machine
+  (launchers, merges, pushes, deletions) and streams every log, so
+  `api/access.py` serves only loopback `Host` names (DNS rebinding carries
+  the attacker's name) and refuses any request or WebSocket whose `Origin` is
+  present and not loopback (a cross-site page). No `Origin` (the CLI, curl,
+  the runner's probe) passes, and the Bun dev server on another loopback port
+  keeps working. Binding another address requires naming it with
+  `--allow-host`. `server.json` carries only the URL the CLI needs.
+- **Issue-driven agent runs get project tools, not a shell.** Delegated
+  issues and dependency updates read text anyone can write, so those runs may
+  edit files and run the project's own `uv`, `bun`, and `cargo` commands,
+  never arbitrary shell, git, or the network.
+- **Landing is fast-forward or nothing.** A merged sync moves a checked-out
+  branch only by `merge --ff-only` in a clean checkout; a rebased sync never
+  lands into a checked-out branch, because that would reset the user's tree,
+  and parks as ready to apply until the branch is checked out nowhere. A
+  refusal carries git's own message instead of "commit or stash". Before
+  anything lands, upstream must be an ancestor of the result.
+- **Fork preview is a pure read.** `forks.preview` neither fetches nor
+  touches state (it re-stamped the prediction, so a view following the forks
+  state refetched it forever); `forks.refresh-status` is the explicit fetch.
+- **Gates run in the checkout, behind a confirmation.** The point is to judge
+  the working tree as it is, uncommitted edits included, and fixers rewrite
+  it, so the click that starts them states that.
+- **Pinned ports are reclaimed only from ourselves.** A listener on a pinned
+  port is killed without asking only when it is inside the project and its
+  `(pid, create time)` was recorded from this supervisor's own process tree;
+  anything else blocks the service until the confirmed release action.
+- **The default branch is resolved, not assumed.** The manifest's
+  `default_branch` wins only when it is set explicitly; otherwise work starts
+  from origin's HEAD, else the checked-out branch, and fails loudly when none
+  exists.
+- **Every agent or sync run is guarded.** An exception or cancellation after
+  a run is recorded marks it failed (or parked) with the error instead of
+  leaving it `running`; startup reconciles stored runs and removes worktree
+  directories no run references.
+- **Remote URLs are redacted where they are published.** Credentials in a
+  remote's userinfo never reach state, the API, reports, or job logs; git
+  commands keep using the remote by name.
+- **User strings never become git options.** Revisions are verified with
+  `rev-parse --verify --end-of-options`, remotes are checked against
+  `git remote`, and every user value follows `--end-of-options` or `--`.
 
 ## WebUI
 

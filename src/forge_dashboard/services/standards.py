@@ -33,7 +33,7 @@ from forge_dashboard.domain.summary import StandardsFacts
 from forge_dashboard.manifest import load_manifest
 from forge_dashboard.manifest.models import MANIFEST_FILENAME
 from forge_dashboard.manifest.schema import manifest_json_schema_text
-from forge_dashboard.services.agents import AgentsService
+from forge_dashboard.services.agents import AgentsService, base_branch_of
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import ChangeKind
 from forge_dashboard.services.jobs import JobContext, JobOutcome, JobsService, JobStatus
@@ -422,74 +422,75 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
                 kind="standards",
                 title=f"Bring {record.id} up to standards",
                 branch_prefix="forge-standards",
-                base_branch=record.default_branch,
+                base_branch=await base_branch_of(record),
                 job_id=context.job_id,
             )
-            head, _subject = await self._forge_head(forge)
-            travelling = self.config.travelling_sections
-            before = await asyncio.to_thread(
-                rules.evaluate, worktree.path, forge, travelling_sections=travelling, forge_head=head
-            )
-            context.log(f"before: {before.passing}/{before.total} checks passing")
-            changed = await self.apply_deterministic(worktree.path, forge, head)
-            hooks = await self._install_hooks(context, record)
-            context.log(f"deterministic fixes: {', '.join(changed) or 'none'}; hooks installed: {hooks}")
-            await worktrees.commit_all(worktree.path, "Apply forge standards: deterministic fixes")
-            middle = await asyncio.to_thread(
-                rules.evaluate, worktree.path, forge, travelling_sections=travelling, forge_head=head
-            )
-            agent_needed = [check for check in middle.failing if check.fix == "agent"]
-            agent_ids: list[str] = []
-            if agent_needed:
-                manifest = load_manifest(worktree.path).manifest
-                prompt = standards_brief(
-                    project_name=manifest.project.name if manifest else record.path.name,
-                    languages=list(manifest.project.languages) if manifest else record.languages,
-                    failing=agent_needed,
-                    forge=forge,
-                    travelling=travelling,
-                    revision=head,
+            async with self._agents.guard_branch_run(run, record.path):
+                head, _subject = await self._forge_head(forge)
+                travelling = self.config.travelling_sections
+                before = await asyncio.to_thread(
+                    rules.evaluate, worktree.path, forge, travelling_sections=travelling, forge_head=head
                 )
-                agent = await self._agents.run_agent(
-                    context, kind="standards", project_id=record.id, prompt=prompt, cwd=worktree.path
+                context.log(f"before: {before.passing}/{before.total} checks passing")
+                changed = await self.apply_deterministic(worktree.path, forge, head)
+                hooks = await self._install_hooks(context, record)
+                context.log(f"deterministic fixes: {', '.join(changed) or 'none'}; hooks installed: {hooks}")
+                await worktrees.commit_all(worktree.path, "Apply forge standards: deterministic fixes")
+                middle = await asyncio.to_thread(
+                    rules.evaluate, worktree.path, forge, travelling_sections=travelling, forge_head=head
                 )
-                agent_ids.append(agent.run_id)
-                if agent.outcome != "succeeded":
-                    run = await branch_work.finish(
-                        run.model_copy(update={"agent_run_ids": agent_ids}),
-                        record.path,
-                        summary="agent run failed",
-                        error=agent.outcome,
+                agent_needed = [check for check in middle.failing if check.fix == "agent"]
+                agent_ids: list[str] = []
+                if agent_needed:
+                    manifest = load_manifest(worktree.path).manifest
+                    prompt = standards_brief(
+                        project_name=manifest.project.name if manifest else record.path.name,
+                        languages=list(manifest.project.languages) if manifest else record.languages,
+                        failing=agent_needed,
+                        forge=forge,
+                        travelling=travelling,
+                        revision=head,
                     )
-                    return JobOutcome(status=JobStatus.FAILED, summary=f"agent {agent.outcome}")
-                await self.apply_deterministic(worktree.path, forge, head)
-                await worktrees.commit_all(worktree.path, "Bring the repo up to forge's standards")
-            after = await asyncio.to_thread(
-                rules.evaluate, worktree.path, forge, travelling_sections=travelling, forge_head=head
-            )
-            manifest_after = load_manifest(worktree.path).manifest
-            checks = list(manifest_after.checks) if manifest_after is not None else []
-            results = await self._checks.run_checks_in(
-                context, record, checks, worktree.path, record_results=False, on_head=True, sha=None, dirty=False
-            )
-            summary = f"standards {before.passing}/{before.total} -> {after.passing}/{after.total}"
-            run = run.model_copy(
-                update={
-                    "agent_run_ids": agent_ids,
-                    "checks": [CheckOutcomeBrief(check_id=c.id, label=c.label, outcome=o) for c, o in results],
-                    "agent_attempts": len(agent_ids),
-                    "compliance_before": Score(passing=before.passing, total=before.total),
-                    "compliance_after": Score(passing=after.passing, total=after.total),
-                    "still_failing": [check.id for check in after.failing],
-                    "hooks_installed": hooks,
-                    "deterministic_fixes": changed,
-                }
-            )
-            run = await branch_work.finish(run, record.path, summary=summary)
-            await self.evaluate_project(record)
-            if run.state is not BranchRunState.READY:
-                return JobOutcome(status=JobStatus.FAILED, summary=run.error or summary)
-            return JobOutcome(status=JobStatus.ATTENTION, summary=f"{summary}; review and merge")
+                    agent = await self._agents.run_agent(
+                        context, kind="standards", project_id=record.id, prompt=prompt, cwd=worktree.path
+                    )
+                    agent_ids.append(agent.run_id)
+                    if agent.outcome != "succeeded":
+                        run = await branch_work.finish(
+                            run.model_copy(update={"agent_run_ids": agent_ids}),
+                            record.path,
+                            summary="agent run failed",
+                            error=agent.outcome,
+                        )
+                        return JobOutcome(status=JobStatus.FAILED, summary=f"agent {agent.outcome}")
+                    await self.apply_deterministic(worktree.path, forge, head)
+                    await worktrees.commit_all(worktree.path, "Bring the repo up to forge's standards")
+                after = await asyncio.to_thread(
+                    rules.evaluate, worktree.path, forge, travelling_sections=travelling, forge_head=head
+                )
+                manifest_after = load_manifest(worktree.path).manifest
+                checks = list(manifest_after.checks) if manifest_after is not None else []
+                results = await self._checks.run_checks_in(
+                    context, record, checks, worktree.path, record_results=False, on_head=True, sha=None, dirty=False
+                )
+                summary = f"standards {before.passing}/{before.total} -> {after.passing}/{after.total}"
+                run = run.model_copy(
+                    update={
+                        "agent_run_ids": agent_ids,
+                        "checks": [CheckOutcomeBrief(check_id=c.id, label=c.label, outcome=o) for c, o in results],
+                        "agent_attempts": len(agent_ids),
+                        "compliance_before": Score(passing=before.passing, total=before.total),
+                        "compliance_after": Score(passing=after.passing, total=after.total),
+                        "still_failing": [check.id for check in after.failing],
+                        "hooks_installed": hooks,
+                        "deterministic_fixes": changed,
+                    }
+                )
+                run = await branch_work.finish(run, record.path, summary=summary)
+                await self.evaluate_project(record)
+                if run.state is not BranchRunState.READY:
+                    return JobOutcome(status=JobStatus.FAILED, summary=run.error or summary)
+                return JobOutcome(status=JobStatus.ATTENTION, summary=f"{summary}; review and merge")
 
         return await self._jobs.submit(
             kind="standards.bring-up",
@@ -516,47 +517,61 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
                 kind="adopt",
                 title=f"Adopt {record.id}",
                 branch_prefix="forge-adopt",
-                base_branch=record.default_branch,
+                base_branch=await base_branch_of(record),
                 job_id=context.job_id,
             )
-            listing = await gitops.output(worktree.path, "ls-files")
-            readme_path = worktree.path / "README.md"
-            readme = readme_path.read_text(encoding="utf-8", errors="replace")[:6000] if readme_path.is_file() else ""
-            contract = CONTRACT_DOC.read_text(encoding="utf-8") if CONTRACT_DOC.is_file() else ""
-            problems: str | None = None
-            agent_ids: list[str] = []
-            for attempt in range(1, ADOPT_ATTEMPTS + 1):
-                prompt = adopt_brief(
-                    listing="\n".join(listing.splitlines()[:400]),
-                    readme=readme,
-                    contract=contract,
-                    schema=manifest_json_schema_text(),
-                    problems=problems,
+            async with self._agents.guard_branch_run(run, record.path):
+                listing = await gitops.output(worktree.path, "ls-files")
+                readme_path = worktree.path / "README.md"
+                readme = (
+                    readme_path.read_text(encoding="utf-8", errors="replace")[:6000] if readme_path.is_file() else ""
                 )
-                agent = await self._agents.run_agent(
-                    context, kind="adopt", project_id=record.id, prompt=prompt, cwd=worktree.path
+                contract = CONTRACT_DOC.read_text(encoding="utf-8") if CONTRACT_DOC.is_file() else ""
+                problems: str | None = None
+                agent_ids: list[str] = []
+                for attempt in range(1, ADOPT_ATTEMPTS + 1):
+                    prompt = adopt_brief(
+                        listing="\n".join(listing.splitlines()[:400]),
+                        readme=readme,
+                        contract=contract,
+                        schema=manifest_json_schema_text(),
+                        problems=problems,
+                    )
+                    agent = await self._agents.run_agent(
+                        context, kind="adopt", project_id=record.id, prompt=prompt, cwd=worktree.path
+                    )
+                    agent_ids.append(agent.run_id)
+                    if agent.outcome != "succeeded":
+                        # The repair loop is for a manifest the agent got wrong, not for a run that failed outright.
+                        run = await branch_work.finish(
+                            run.model_copy(update={"agent_run_ids": agent_ids, "agent_attempts": len(agent_ids)}),
+                            record.path,
+                            summary="agent run failed",
+                            error=agent.outcome,
+                        )
+                        return JobOutcome(status=JobStatus.FAILED, summary=f"agent {agent.outcome}")
+                    result = load_manifest(worktree.path)
+                    if result.valid:
+                        context.log(f"manifest valid after {attempt} attempt(s)")
+                        problems = None
+                        break
+                    problems = "\n".join(issue.render(MANIFEST_FILENAME) for issue in result.issues)
+                    context.log(f"attempt {attempt}: manifest invalid:\n{problems}")
+                await worktrees.commit_all(worktree.path, "Add forge.project.toml")
+                run = run.model_copy(update={"agent_run_ids": agent_ids, "agent_attempts": len(agent_ids)})
+                run = await branch_work.finish(
+                    run,
+                    record.path,
+                    summary="manifest valid" if problems is None else "invalid",
+                    error=None if problems is None else problems,
                 )
-                agent_ids.append(agent.run_id)
-                result = load_manifest(worktree.path)
-                if result.valid:
-                    context.log(f"manifest valid after {attempt} attempt(s)")
-                    problems = None
-                    break
-                problems = "\n".join(issue.render(MANIFEST_FILENAME) for issue in result.issues)
-                context.log(f"attempt {attempt}: manifest invalid:\n{problems}")
-            await worktrees.commit_all(worktree.path, "Add forge.project.toml")
-            run = run.model_copy(update={"agent_run_ids": agent_ids, "agent_attempts": len(agent_ids)})
-            run = await branch_work.finish(
-                run,
-                record.path,
-                summary="manifest valid" if problems is None else "invalid",
-                error=None if problems is None else problems,
-            )
-            if problems is not None:
-                return JobOutcome(status=JobStatus.FAILED, summary=f"no valid manifest after {ADOPT_ATTEMPTS} attempts")
-            return JobOutcome(
-                status=JobStatus.ATTENTION, summary="manifest written; review, merge, then bring up to standards"
-            )
+                if problems is not None:
+                    return JobOutcome(
+                        status=JobStatus.FAILED, summary=f"no valid manifest after {ADOPT_ATTEMPTS} attempts"
+                    )
+                return JobOutcome(
+                    status=JobStatus.ATTENTION, summary="manifest written; review, merge, then bring up to standards"
+                )
 
         return await self._jobs.submit(
             kind="standards.adopt",

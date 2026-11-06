@@ -18,6 +18,7 @@ from forge_dashboard.domain.scheduling import IntervalSchedule
 from forge_dashboard.services.checks import (
     CheckSettings,
     ChecksService,
+    GateConfigError,
     GateInput,
     HistoryInput,
     OnChangeSchedule,
@@ -26,6 +27,7 @@ from forge_dashboard.services.checks import (
     ScheduleInput,
     parse_gates,
     precommit_argv,
+    read_gates,
 )
 from forge_dashboard.services.discovery import DiscoveryService, PathInput
 from forge_dashboard.services.git import GitService
@@ -99,8 +101,28 @@ def test_gates_parse_ids_and_stages(forge_repo: Path, tmp_path: Path) -> None:
     gates = {gate.id: gate.stages for gate in parse_gates(forge_repo)}
     assert gates["ruff-check"] == ["pre-commit"] and gates["tests-and-diff-coverage"] == ["pre-push"]
     assert parse_gates(tmp_path) == []
-    (tmp_path / ".pre-commit-config.yaml").write_text("repos: [", encoding="utf-8")
+    (tmp_path / ".pre-commit-config.yaml").write_text("", encoding="utf-8")
     assert parse_gates(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("config", "problem"),
+    [
+        ("repos: [", "is not valid YAML"),
+        ("- just\n- a list\n", "document: Input should be a valid dictionary"),
+        ("repos:\n  - hooks:\n      - name: no id\n", "repos.0.hooks.0.id: Field required"),
+        ("default_stages: pre-commit\n", "default_stages: Input should be a valid list"),
+    ],
+)
+def test_a_pre_commit_config_that_cannot_be_read_is_an_error_not_an_empty_gate_list(
+    tmp_path: Path, config: str, problem: str
+) -> None:
+    (tmp_path / ".pre-commit-config.yaml").write_text(config, encoding="utf-8")
+
+    with pytest.raises(GateConfigError, match=problem):
+        parse_gates(tmp_path)
+    gates, error = read_gates(tmp_path)
+    assert gates == [] and error is not None and problem in error
 
 
 def test_precommit_resolution_prefers_the_projects_own_environment(tmp_path: Path) -> None:
@@ -289,6 +311,42 @@ async def test_gates_run_through_pre_commit(
     assert commit_gates.status is JobStatus.SUCCEEDED
     with pytest.raises(ActionError, match="no gate"):
         await checks.run_gate(GateInput(project_id="alpha", gate_id="ghost"))
+
+
+async def test_a_pre_commit_config_that_cannot_be_read_is_reported_in_the_state(
+    checks_env: tuple[ChecksService, ProjectsService, DiscoveryService, JobsService, SchedulerService, Runtime],
+    make_project: Callable[..., Path],
+) -> None:
+    checks, projects, discovery, _jobs, _scheduler, _runtime = checks_env
+    alpha = _manifest_with_checks(make_project)
+    config = alpha / ".pre-commit-config.yaml"
+    good_config = config.read_text(encoding="utf-8")
+    config.write_text("repos: [", encoding="utf-8")
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: checks.project_checks("alpha") is not None)
+
+    project = checks.project_checks("alpha")
+    assert project is not None and project.gates == []
+    assert project.gates_error is not None and project.gates_error.startswith(
+        ".pre-commit-config.yaml is not valid YAML"
+    )
+    with pytest.raises(ActionError, match="is not valid YAML") as refused:
+        await checks.run_gate(GateInput(project_id="alpha", gate_id="say-hi"))
+    assert refused.value.status == 409
+
+    config.write_text(good_config, encoding="utf-8")
+    await checks.files_changed(projects.record("alpha"), frozenset({"worktree"}))
+    project = checks.project_checks("alpha")
+    assert project is not None and [gate.id for gate in project.gates] == ["say-hi"] and project.gates_error is None
+
+
+def test_starting_a_gate_asks_first_because_fixers_rewrite_the_working_tree() -> None:
+    specs = {action_id: meta for action_id, meta, _input, _output in ChecksService.action_specs()}
+
+    for action_id in ("run-gate", "run-commit-gates", "run-push-gate"):
+        assert specs[action_id].confirm, action_id
+        assert "uncommitted edits included" in (specs[action_id].description or ""), action_id
+    assert not any(specs[action_id].confirm for action_id in ("run", "refresh", "set-settings"))
 
 
 async def test_projects_without_checks_are_refused(

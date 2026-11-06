@@ -16,6 +16,7 @@ from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import ActionError, ProjectRef
 from forge_dashboard.domain import standards as rules
+from forge_dashboard.domain.harness import HarnessConfig
 from forge_dashboard.domain.standards import ForgeSource
 from forge_dashboard.services.agents import AgentsConfig, AgentsService, BranchRunInput, BranchRunsInput
 from forge_dashboard.services.checks import ChecksService
@@ -211,6 +212,65 @@ async def test_adopt_writes_a_valid_manifest_with_a_repair_loop(
     await projects.refresh(project_id)
     with pytest.raises(ActionError, match="already has"):
         await standards.adopt(ProjectRef(project_id=project_id))
+
+
+StandardsEnv = tuple[StandardsService, ProjectsService, DiscoveryService, JobsService, AgentsService]
+
+
+def _id_of(projects: ProjectsService, path: Path) -> str:
+    return next(record.id for record in projects.records() if record.path == path.resolve())
+
+
+async def test_adopt_stops_at_a_harness_that_did_not_run_instead_of_retrying_it(
+    standards_env: StandardsEnv, make_project: Callable[..., Path]
+) -> None:
+    standards, projects, discovery, jobs, agents = standards_env
+    loose = make_project("Loose", manifest=None)
+    await discovery.add_project(PathInput(path=str(loose)))
+    project_id = _id_of(projects, loose)
+    await agents.update_config(AgentsConfig(harness=HarnessConfig(command=["definitely-not-a-harness-xyz"])))
+
+    final = await jobs.wait((await standards.adopt(ProjectRef(project_id=project_id))).job_id)
+
+    assert final.status is JobStatus.FAILED and final.summary == "agent harness-missing"
+    [run] = (await agents.branch_runs(BranchRunsInput(project_id=project_id, kind="adopt"))).runs
+    assert run.state is BranchRunState.FAILED and run.error == "harness-missing" and run.agent_attempts == 1
+    assert len(run.agent_run_ids) == 1
+
+
+async def test_a_failure_while_adopting_fails_the_run_instead_of_leaving_it_running(
+    standards_env: StandardsEnv, make_project: Callable[..., Path]
+) -> None:
+    standards, projects, discovery, jobs, agents = standards_env
+    loose = make_project("Loose", manifest=None)
+    await discovery.add_project(PathInput(path=str(loose)))
+    project_id = _id_of(projects, loose)
+    hook = loose / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n", encoding="utf-8", newline="\n")
+
+    final = await jobs.wait((await standards.adopt(ProjectRef(project_id=project_id))).job_id)
+
+    assert final.status is JobStatus.FAILED and "hook says no" in (final.error or "")
+    [run] = (await agents.branch_runs(BranchRunsInput(project_id=project_id, kind="adopt"))).runs
+    assert run.state is BranchRunState.FAILED and "hook says no" in (run.error or "")
+    discarded = await agents.discard_branch(BranchRunInput(run_id=run.id))
+    assert discarded.state is BranchRunState.DISCARDED and not Path(run.worktree).exists()
+
+
+async def test_adopt_starts_from_the_repos_own_default_branch(
+    standards_env: StandardsEnv, make_project: Callable[..., Path], git: Git
+) -> None:
+    standards, projects, discovery, jobs, agents = standards_env
+    loose = make_project("Loose", manifest=None)
+    git(loose, "branch", "-m", "main", "trunk")
+    await discovery.add_project(PathInput(path=str(loose)))
+    project_id = _id_of(projects, loose)
+
+    final = await jobs.wait((await standards.adopt(ProjectRef(project_id=project_id))).job_id)
+
+    assert final.status is JobStatus.ATTENTION
+    [run] = (await agents.branch_runs(BranchRunsInput(project_id=project_id, kind="adopt"))).runs
+    assert run.base_branch == "trunk" and run.state is BranchRunState.READY
 
 
 async def test_without_the_forge_repo_bring_up_is_refused(
