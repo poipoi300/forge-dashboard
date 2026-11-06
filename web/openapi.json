@@ -8815,7 +8815,8 @@
             "title": "Stale",
             "default": false,
             "x-ui": {
-              "help": "HEAD moved or the tree changed since the last run."
+              "help": "HEAD moved or the tree changed since the last run.",
+              "short_label": "stale"
             }
           },
           "coverage_percent": {
@@ -15997,7 +15998,7 @@
             "x-ui": {
               "enum_labels": {
                 "commit": "commit",
-                "unknown": "unknown source",
+                "unknown": "no history",
                 "working-tree": "uncommitted edits"
               },
               "short_label": ""

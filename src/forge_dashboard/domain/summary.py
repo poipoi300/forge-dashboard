@@ -127,7 +127,9 @@ class CheckFacts(BaseModel):
     ran_at: float | None = Field(None, json_schema_extra=ui(format="relative-time", short_label="ran"))
     duration_s: float | None = Field(None, json_schema_extra=ui(format="duration", short_label="took"))
     sha: str | None = Field(None, json_schema_extra=ui(format="code", short_label="at"))
-    stale: bool = Field(False, json_schema_extra=ui(help="HEAD moved or the tree changed since the last run."))
+    stale: bool = Field(
+        False, json_schema_extra=ui(short_label="stale", help="HEAD moved or the tree changed since the last run.")
+    )
     coverage_percent: float | None = Field(None, json_schema_extra=ui(format="percent", short_label="coverage"))
 
 
@@ -364,7 +366,7 @@ class LastChange(BaseModel):
         "unknown",
         json_schema_extra=ui(
             short_label="",
-            enum_labels={"commit": "commit", "working-tree": "uncommitted edits", "unknown": "unknown source"},
+            enum_labels={"commit": "commit", "working-tree": "uncommitted edits", "unknown": "no history"},
         ),
     )
 
