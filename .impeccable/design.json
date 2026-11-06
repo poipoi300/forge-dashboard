@@ -1,0 +1,748 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T01:17:33+00:00",
+  "title": "Design System: forge dashboard",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "primary",
+        "displayName": "Paper",
+        "canonical": "oklch(98.5% 0.001 106.4)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#40403f",
+          "#5e5e5d",
+          "#80807f",
+          "#a4a4a4",
+          "#cacaca",
+          "#eeeeee"
+        ]
+      },
+      "surface": {
+        "role": "primary",
+        "displayName": "Surface",
+        "canonical": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#808080",
+          "#a4a4a4",
+          "#cacaca",
+          "#eeeeee"
+        ]
+      },
+      "surface-sunk": {
+        "role": "neutral",
+        "displayName": "Surface Sunk",
+        "canonical": "oklch(97.9% 0.002 247.8)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#3f4040",
+          "#5d5e5e",
+          "#7f8081",
+          "#a4a5a5",
+          "#cacacb",
+          "#eeeeef"
+        ]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Ink",
+        "canonical": "oklch(18.7% 0.015 266.8)",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#222429",
+          "#3d4046",
+          "#5a5e66",
+          "#7c8089",
+          "#a1a5ac",
+          "#c8cad1",
+          "#eceef3"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Ink 2",
+        "canonical": "oklch(41.2% 0.025 264.2)",
+        "tonalRamp": [
+          "#090b10",
+          "#20242c",
+          "#3a404b",
+          "#575e6b",
+          "#79808f",
+          "#9ea5b2",
+          "#c5cbd5",
+          "#ebeff7"
+        ]
+      },
+      "ink-3": {
+        "role": "neutral",
+        "displayName": "Ink 3",
+        "canonical": "oklch(52.3% 0.024 264.3)",
+        "tonalRamp": [
+          "#090b10",
+          "#20242c",
+          "#3b404a",
+          "#575e6a",
+          "#79808e",
+          "#9fa5b1",
+          "#c6cbd5",
+          "#ebeff6"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "oklch(90.6% 0.009 264.5)",
+        "tonalRamp": [
+          "#0a0b0d",
+          "#232427",
+          "#3e4043",
+          "#5b5e62",
+          "#7e8085",
+          "#a2a5a9",
+          "#c9cace",
+          "#edeef1"
+        ]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Rule Strong",
+        "canonical": "oklch(80.1% 0.015 264.5)",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#222429",
+          "#3d4046",
+          "#5a5e66",
+          "#7c8089",
+          "#a1a5ac",
+          "#c7cbd1",
+          "#eceef3"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover",
+        "canonical": "oklch(94.9% 0.006 264.5)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#232426",
+          "#3e4042",
+          "#5c5e61",
+          "#7e8084",
+          "#a3a4a7",
+          "#c9cacd",
+          "#edeef0"
+        ]
+      },
+      "select": {
+        "role": "neutral",
+        "displayName": "Select",
+        "canonical": "oklch(93.9% 0.023 264.5)",
+        "tonalRamp": [
+          "#090b10",
+          "#20242b",
+          "#3b404a",
+          "#585e6a",
+          "#7a808e",
+          "#9fa5b1",
+          "#c6cbd5",
+          "#ebeff6"
+        ]
+      },
+      "board": {
+        "role": "primary",
+        "displayName": "Board",
+        "canonical": "oklch(22.0% 0.044 263.9)",
+        "tonalRamp": [
+          "#070b14",
+          "#1d2432",
+          "#364052",
+          "#525e75",
+          "#74809a",
+          "#99a5bb",
+          "#c1cbdd",
+          "#e8effd"
+        ]
+      },
+      "board-2": {
+        "role": "neutral",
+        "displayName": "Board 2",
+        "canonical": "oklch(26.8% 0.052 264.4)",
+        "tonalRamp": [
+          "#070b15",
+          "#1c2434",
+          "#354056",
+          "#505e79",
+          "#72809e",
+          "#98a5bf",
+          "#c0cbe1",
+          "#e7efff"
+        ]
+      },
+      "board-3": {
+        "role": "neutral",
+        "displayName": "Board 3",
+        "canonical": "oklch(31.9% 0.055 263.9)",
+        "tonalRamp": [
+          "#060b16",
+          "#1b2435",
+          "#344057",
+          "#4f5e7b",
+          "#7080a0",
+          "#97a5c1",
+          "#bfcbe2",
+          "#e6efff"
+        ]
+      },
+      "board-ink": {
+        "role": "neutral",
+        "displayName": "Board Ink",
+        "canonical": "oklch(97.0% 0.006 264.5)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#232426",
+          "#3e4042",
+          "#5c5e61",
+          "#7e8083",
+          "#a3a4a7",
+          "#c9cacd",
+          "#edeef0"
+        ]
+      },
+      "board-ink-2": {
+        "role": "neutral",
+        "displayName": "Board Ink 2",
+        "canonical": "oklch(76.8% 0.034 264.4)",
+        "tonalRamp": [
+          "#080b12",
+          "#1f242f",
+          "#39404e",
+          "#555e70",
+          "#778094",
+          "#9ca5b6",
+          "#c3cbd9",
+          "#e9eff9"
+        ]
+      },
+      "board-rule": {
+        "role": "neutral",
+        "displayName": "Board Rule",
+        "canonical": "oklch(34.0% 0.056 265.7)",
+        "tonalRamp": [
+          "#060b16",
+          "#1c2435",
+          "#353f57",
+          "#505d7b",
+          "#7180a1",
+          "#97a5c1",
+          "#bfcbe3",
+          "#e6efff"
+        ]
+      },
+      "board-signal": {
+        "role": "secondary",
+        "displayName": "Board Signal",
+        "canonical": "oklch(69.3% 0.198 20.4)",
+        "tonalRamp": [
+          "#260000",
+          "#510006",
+          "#7e0018",
+          "#ad142e",
+          "#d9424e",
+          "#f8777a",
+          "#ffa8a8",
+          "#ffd7d5"
+        ]
+      },
+      "board-amber": {
+        "role": "secondary",
+        "displayName": "Board Amber",
+        "canonical": "oklch(81.8% 0.157 82.3)",
+        "tonalRamp": [
+          "#190500",
+          "#3b1b00",
+          "#5f3500",
+          "#855200",
+          "#ab7500",
+          "#cb9c3a",
+          "#ebc57d",
+          "#ffebb8"
+        ]
+      },
+      "signal": {
+        "role": "secondary",
+        "displayName": "Signal",
+        "canonical": "oklch(54.7% 0.223 27.7)",
+        "tonalRamp": [
+          "#290000",
+          "#560000",
+          "#850000",
+          "#b50001",
+          "#e3352f",
+          "#ff7063",
+          "#ffa596",
+          "#ffd5c9"
+        ]
+      },
+      "signal-ink": {
+        "role": "secondary",
+        "displayName": "Signal Ink",
+        "canonical": "oklch(48.6% 0.198 27.5)",
+        "tonalRamp": [
+          "#260000",
+          "#510000",
+          "#7e0003",
+          "#ad1718",
+          "#d9443c",
+          "#f8786c",
+          "#ffaa9d",
+          "#ffd8cd"
+        ]
+      },
+      "signal-wash": {
+        "role": "secondary",
+        "displayName": "Signal Wash",
+        "canonical": "oklch(94.8% 0.023 11.0)",
+        "tonalRamp": [
+          "#0f090a",
+          "#2b2122",
+          "#493c3d",
+          "#69595b",
+          "#8d7b7d",
+          "#b0a0a2",
+          "#d4c7c8",
+          "#f5eced"
+        ]
+      },
+      "amber": {
+        "role": "secondary",
+        "displayName": "Amber",
+        "canonical": "oklch(77.5% 0.163 76.2)",
+        "tonalRamp": [
+          "#1b0400",
+          "#3f1800",
+          "#643100",
+          "#8c4c00",
+          "#b37000",
+          "#d39837",
+          "#f1c27b",
+          "#ffe9b7"
+        ]
+      },
+      "amber-glyph": {
+        "role": "secondary",
+        "displayName": "Amber Glyph",
+        "canonical": "oklch(61.1% 0.129 74.8)",
+        "tonalRamp": [
+          "#190600",
+          "#3a1b00",
+          "#5e3500",
+          "#845100",
+          "#aa7412",
+          "#cb9b57",
+          "#ebc38e",
+          "#ffeac3"
+        ]
+      },
+      "amber-ink": {
+        "role": "secondary",
+        "displayName": "Amber Ink",
+        "canonical": "oklch(49.5% 0.105 73.7)",
+        "tonalRamp": [
+          "#170700",
+          "#371e00",
+          "#593800",
+          "#7e540d",
+          "#a47635",
+          "#c59d68",
+          "#e5c59a",
+          "#ffeacc"
+        ]
+      },
+      "amber-wash": {
+        "role": "secondary",
+        "displayName": "Amber Wash",
+        "canonical": "oklch(96.3% 0.036 87.8)",
+        "tonalRamp": [
+          "#0e0b04",
+          "#292317",
+          "#463f2f",
+          "#655d48",
+          "#897f69",
+          "#aca491",
+          "#d1caba",
+          "#f3eee2"
+        ]
+      },
+      "clear": {
+        "role": "tertiary",
+        "displayName": "Clear",
+        "canonical": "oklch(55.5% 0.147 151.0)",
+        "tonalRamp": [
+          "#001200",
+          "#002f08",
+          "#00501c",
+          "#007232",
+          "#309753",
+          "#69b97e",
+          "#9ddcac",
+          "#cffcd8"
+        ]
+      },
+      "clear-ink": {
+        "role": "tertiary",
+        "displayName": "Clear Ink",
+        "canonical": "oklch(47.9% 0.121 152.9)",
+        "tonalRamp": [
+          "#001102",
+          "#002e10",
+          "#004e26",
+          "#1a6f3e",
+          "#41945e",
+          "#73b787",
+          "#a4dab3",
+          "#d3fadd"
+        ]
+      },
+      "clear-wash": {
+        "role": "tertiary",
+        "displayName": "Clear Wash",
+        "canonical": "oklch(95.1% 0.023 161.7)",
+        "tonalRamp": [
+          "#070d0a",
+          "#1e2622",
+          "#37433d",
+          "#53625a",
+          "#75857c",
+          "#9ba8a1",
+          "#c3cec7",
+          "#e9f1ec"
+        ]
+      },
+      "info": {
+        "role": "tertiary",
+        "displayName": "Info",
+        "canonical": "oklch(48.9% 0.186 262.4)",
+        "tonalRamp": [
+          "#00052e",
+          "#011c5c",
+          "#0f388b",
+          "#2355bc",
+          "#437ae7",
+          "#71a2ff",
+          "#a1caff",
+          "#d0efff"
+        ]
+      },
+      "info-ink": {
+        "role": "tertiary",
+        "displayName": "Info Ink",
+        "canonical": "oklch(43.7% 0.164 262.4)",
+        "tonalRamp": [
+          "#00062a",
+          "#051f55",
+          "#173a83",
+          "#2b58b1",
+          "#4c7cdc",
+          "#77a3f7",
+          "#a6cbff",
+          "#d4efff"
+        ]
+      },
+      "info-wash": {
+        "role": "tertiary",
+        "displayName": "Info Wash",
+        "canonical": "oklch(94.2% 0.022 265.8)",
+        "tonalRamp": [
+          "#090b0f",
+          "#21242b",
+          "#3b4049",
+          "#585e69",
+          "#7a808d",
+          "#9fa5b0",
+          "#c6cbd4",
+          "#ebeef5"
+        ]
+      },
+      "idle": {
+        "role": "neutral",
+        "displayName": "Idle",
+        "canonical": "oklch(65.6% 0.021 265.9)",
+        "tonalRamp": [
+          "#090b0f",
+          "#21242b",
+          "#3c4049",
+          "#595e69",
+          "#7b808c",
+          "#a0a5af",
+          "#c6cad3",
+          "#ebeef5"
+        ]
+      },
+      "night-paper": {
+        "role": "neutral",
+        "displayName": "Night Paper",
+        "canonical": "oklch(15.9% 0.009 264.3)",
+        "tonalRamp": [
+          "#0a0b0d",
+          "#232427",
+          "#3e4044",
+          "#5b5e62",
+          "#7e8086",
+          "#a2a5a9",
+          "#c8cace",
+          "#edeef1"
+        ]
+      },
+      "night-surface": {
+        "role": "neutral",
+        "displayName": "Night Surface",
+        "canonical": "oklch(20.0% 0.013 264.2)",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#222428",
+          "#3d4045",
+          "#5a5e65",
+          "#7c8088",
+          "#a1a5ab",
+          "#c8cad0",
+          "#eceef3"
+        ]
+      },
+      "night-ink": {
+        "role": "neutral",
+        "displayName": "Night Ink",
+        "canonical": "oklch(94.9% 0.006 264.5)",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#232426",
+          "#3e4042",
+          "#5c5e61",
+          "#7e8084",
+          "#a3a4a7",
+          "#c9cacd",
+          "#edeef0"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "counter": {
+        "displayName": "Counter",
+        "purpose": "Departures-strip counters and the clock, condensed to 78% width."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "A project's name on its page."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "Section headings above a rule-strong underline."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Tables, cards, and prose; the default size."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels, captions, and chips."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Ids, branches, hashes, paths, and logs."
+      }
+    },
+    "shadows": [
+      {
+        "name": "control",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Outline buttons, inputs, and toggles."
+      },
+      {
+        "name": "floating",
+        "value": "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
+        "purpose": "Popovers, menus, and selects."
+      },
+      {
+        "name": "overlay",
+        "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        "purpose": "Dialogs and sheets; cards, tables, and the board stay flat."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Colour, border, and opacity feedback on hover and selection."
+      },
+      {
+        "name": "dialog",
+        "value": "200ms fade and 95% zoom",
+        "purpose": "Dialogs entering and leaving."
+      },
+      {
+        "name": "sheet",
+        "value": "500ms in, 300ms out, ease-in-out slide",
+        "purpose": "The phone rail sheet."
+      },
+      {
+        "name": "clock-tick",
+        "value": "one eased step per second on the shared tick",
+        "purpose": "The station clock's second disc steps rather than sweeps."
+      },
+      {
+        "name": "reduced",
+        "value": "prefers-reduced-motion: colour, border, and opacity only; spinner at 2.4s",
+        "purpose": "Keeps state feedback and drops movement."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      },
+      {
+        "name": "2xl",
+        "value": "1536px"
+      },
+      {
+        "name": "wide",
+        "value": "2200px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "The one primary action in a region, such as Launch or Apply.",
+      "html": "<button class=\"ds-btn-primary\">Launch</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; font: 500 0.84375rem/1.25rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); border-radius: 4px; cursor: pointer; transition: background-color 150ms, border-color 150ms, color 150ms; background: var(--ink, #10131a); color: var(--paper, #ffffff); border: 1px solid transparent; } .ds-btn-primary:hover { background: var(--ink-2, #444b59); } .ds-btn-primary:focus-visible { outline: 2px solid var(--info, #1f56c7); outline-offset: 2px; } .ds-btn-primary:active { background: #000000; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "The default action button; every action runs through one runner and dialog.",
+      "html": "<button class=\"ds-btn-outline\">Run checks</button>",
+      "css": ".ds-btn-outline { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; font: 500 0.84375rem/1.25rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); border-radius: 4px; cursor: pointer; transition: background-color 150ms, border-color 150ms, color 150ms; background: var(--surface, #ffffff); color: var(--ink, #10131a); border: 1px solid var(--rule-strong, #b9bec8); } .ds-btn-outline:hover { background: var(--hover, #eceef2); } .ds-btn-outline:focus-visible { outline: 2px solid var(--info, #1f56c7); outline-offset: 2px; } .ds-btn-outline:active { background: var(--select, #e3ebfb); }"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Irreversible actions, always behind a typed confirmation.",
+      "html": "<button class=\"ds-btn-destructive\">Discard worktree</button>",
+      "css": ".ds-btn-destructive { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; font: 500 0.84375rem/1.25rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); border-radius: 4px; cursor: pointer; transition: background-color 150ms, border-color 150ms, color 150ms; background: var(--signal, #d40011); color: #ffffff; border: 1px solid transparent; } .ds-btn-destructive:hover { background: var(--signal-ink, #b5000e); } .ds-btn-destructive:focus-visible { outline: 2px solid var(--info, #1f56c7); outline-offset: 2px; }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "Filter fields and every schema-built form control.",
+      "html": "<input class=\"ds-input-search\" type=\"search\" placeholder=\"Filter projects\" aria-label=\"Filter projects\">",
+      "css": ".ds-input-search { height: 32px; width: 16rem; padding: 0 10px; font: 400 0.84375rem/1.25rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); color: var(--ink, #10131a); background: var(--surface, #ffffff); border: 1px solid var(--rule-strong, #b9bec8); border-radius: 4px; transition: border-color 150ms; } .ds-input-search::placeholder { color: var(--ink-3, #636a78); } .ds-input-search:hover { border-color: var(--ink-3, #636a78); } .ds-input-search:focus-visible { outline: 2px solid var(--info, #1f56c7); outline-offset: 2px; border-color: var(--info, #1f56c7); }"
+    },
+    {
+      "name": "Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Categorical facts and the lifecycle marker; amber or red only for paused or blocked.",
+      "html": "<span class=\"ds-chip\">python</span> <span class=\"ds-chip\">cli</span> <span class=\"ds-chip ds-chip-warn\">paused</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; font: 400 0.71875rem/1.05rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); color: var(--ink-2, #444b59); background: var(--surface, #ffffff); border: 1px solid var(--rule, #dde0e6); border-radius: 3px; } .ds-chip-warn { color: var(--amber-ink, #855700); background: var(--amber-wash, #fdf2d8); border-color: var(--amber, #f0a500); }"
+    },
+    {
+      "name": "Project Card",
+      "kind": "card",
+      "refersTo": "card-project",
+      "description": "One project on the overview, laid out by the summary schema's slots.",
+      "html": "<article class=\"ds-card\"><header class=\"ds-card-head\"><span class=\"ds-card-name\">forge</span><code class=\"ds-card-id\">forge</code><span class=\"ds-card-health\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m9 12 2 2 4-4\"/></svg> passing</span></header><p class=\"ds-card-sub\">Specification to shipped software, with gates</p><dl class=\"ds-card-signals\"><dt>Checks</dt><dd><span class=\"ds-fig\">12</span> of <span class=\"ds-fig\">12</span></dd><dt>Last change</dt><dd><span class=\"ds-fig\">20</span> min ago</dd></dl><p class=\"ds-card-path\">~/Projects/Tests/forge</p></article>",
+      "css": ".ds-card { width: 21rem; padding: 14px; background: var(--surface, #ffffff); color: var(--ink, #10131a); border: 1px solid var(--rule, #dde0e6); border-radius: 4px; font: 400 0.84375rem/1.25rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); transition: border-color 150ms; } .ds-card:hover { border-color: var(--rule-strong, #b9bec8); } .ds-card:focus-within { box-shadow: 0 0 0 1px var(--info, #1f56c7); } .ds-card-head { display: flex; align-items: baseline; gap: 8px; } .ds-card-name { font-weight: 600; font-size: 0.90625rem; } .ds-card-id { font: 400 0.71875rem var(--font-mono, 'JetBrains Mono Variable', 'Cascadia Code', Consolas, monospace); color: var(--ink-3, #636a78); } .ds-card-health { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--clear-ink, #06703a); } .ds-card-sub { margin: 4px 0 10px; color: var(--ink-2, #444b59); } .ds-card-signals { display: grid; grid-template-columns: auto 1fr; gap: 0; margin: 0; border-top: 1px solid var(--rule, #dde0e6); } .ds-card-signals dt, .ds-card-signals dd { margin: 0; padding: 6px 0; border-bottom: 1px solid var(--rule, #dde0e6); } .ds-card-signals dt { color: var(--ink-3, #636a78); padding-right: 12px; } .ds-fig { font-stretch: 72%; font-variant-numeric: tabular-nums; } .ds-card-path { margin: 10px 0 0; font: 400 0.71875rem var(--font-mono, 'JetBrains Mono Variable', 'Cascadia Code', Consolas, monospace); color: var(--ink-3, #636a78); }"
+    },
+    {
+      "name": "Board Rail",
+      "kind": "nav",
+      "refersTo": "rail",
+      "description": "The left rail on the board colour, with counts at the right edge.",
+      "html": "<nav class=\"ds-rail\" aria-label=\"Sections\"><a class=\"ds-rail-link\" aria-current=\"page\" href=\"#\">Projects<span class=\"ds-rail-count\">14</span></a><a class=\"ds-rail-link\" href=\"#\">Jobs</a><a class=\"ds-rail-link\" href=\"#\">Activity<span class=\"ds-rail-count ds-rail-count-warn\">3</span></a></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; gap: 2px; width: 208px; padding: 12px 8px; background: var(--board, #101a2f); font: 500 0.84375rem/1.25rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); } .ds-rail-link { display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: 4px; color: var(--board-ink-2, #a9b4ca); text-decoration: none; transition: background-color 150ms, color 150ms; } .ds-rail-link:hover { background: var(--board-2, #19253f); color: var(--board-ink, #f3f5f9); } .ds-rail-link[aria-current='page'] { background: var(--board-3, #24324f); color: var(--board-ink, #f3f5f9); } .ds-rail-link:focus-visible { outline: 2px solid var(--board-ink, #f3f5f9); outline-offset: -2px; } .ds-rail-count { margin-left: auto; font-stretch: 72%; font-variant-numeric: tabular-nums; } .ds-rail-count-warn { color: var(--board-amber, #f5b82e); }"
+    },
+    {
+      "name": "Departures Strip",
+      "kind": "custom",
+      "refersTo": "departures-strip",
+      "description": "The signature board: clock, four counters, next departures with lateness in board signal.",
+      "html": "<section class=\"ds-strip\" aria-label=\"Departures\"><span class=\"ds-strip-clock\">14:32</span><a class=\"ds-strip-counter\" href=\"#\"><b>14</b><span>projects</span></a><a class=\"ds-strip-counter ds-strip-bad\" href=\"#\"><b>2</b><span>failing</span></a><a class=\"ds-strip-counter\" href=\"#\"><b>5</b><span>services up</span></a><a class=\"ds-strip-counter ds-strip-warn\" href=\"#\"><b>3</b><span>need attention</span></a><span class=\"ds-strip-next\"><b>15:00</b> forge checks <em>+4</em></span></section>",
+      "css": ".ds-strip { display: flex; align-items: center; gap: 28px; padding: 12px 20px; background: var(--board, #101a2f); color: var(--board-ink, #f3f5f9); font: 400 0.84375rem/1.25rem var(--font-sans, 'Archivo Variable', 'Segoe UI', system-ui, sans-serif); } .ds-strip-clock { font-size: 1.75rem; line-height: 2rem; font-weight: 600; font-stretch: 78%; font-variant-numeric: tabular-nums; } .ds-strip-counter { display: flex; flex-direction: column; color: inherit; text-decoration: none; border-radius: 4px; padding: 2px 6px; transition: background-color 150ms; } .ds-strip-counter:hover { background: var(--board-2, #19253f); } .ds-strip-counter:focus-visible { outline: 2px solid var(--board-ink, #f3f5f9); outline-offset: 2px; } .ds-strip-counter b { font-size: 1.75rem; line-height: 2rem; font-weight: 600; font-stretch: 78%; letter-spacing: -0.01em; } .ds-strip-counter span { font-size: 0.71875rem; color: var(--board-ink-2, #a9b4ca); } .ds-strip-bad b { color: var(--board-signal, #ff5c66); } .ds-strip-warn b { color: var(--board-amber, #f5b82e); } .ds-strip-next { color: var(--board-ink-2, #a9b4ca); } .ds-strip-next b { color: var(--board-ink, #f3f5f9); font-stretch: 72%; font-variant-numeric: tabular-nums; } .ds-strip-next em { font-style: normal; color: var(--board-signal, #ff5c66); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Departure Hall",
+    "overview": "The dashboard reads like a Swiss station's information system: a dark\ndeparture board, the rail and the strip across the top, sits over a\npaper-white working ground where the projects are listed like a timetable. One glance answers what is on time, what is late,\nwhat is running, and what needs the maintainer, and the board is the only\nplace the interface raises its voice.\n\nIt is an Operate surface. Scanning dozens of projects quickly matters more\nthan expression, so the brand lives in precise details: the station clock's\nred second disc stepping on the shared tick, condensed tabular figures for\nevery time and count, hairline rules instead of boxes, and status written as a\nglyph and a word, never as colour alone. The board stays dark in both themes\n(a shade deeper at night); the theme switch changes the ground beneath it.",
+    "keyCharacteristics": [
+      "A dark board (rail and departures strip) over a paper or night ground.",
+      "Signal red is reserved for failures and lateness; everything that only waits for a decision is amber.",
+      "One grotesk with a width axis; numbers condense, words do not.",
+      "Hairline-ruled rows, small radii, no shadows on content.",
+      "Every view is built from the backend's own schemas, so the system is the renderer's vocabulary, not a set of one-off screens."
+    ],
+    "rules": [
+      {
+        "name": "The Red Reservation Rule",
+        "body": "Red means failed or late, nothing else. A parked conflict, an unread notification, or drift from forge is amber.",
+        "section": "colors"
+      },
+      {
+        "name": "The Board Rule",
+        "body": "Red and amber text on the board always use the board variants; the working-ground reds are for the paper.",
+        "section": "colors"
+      },
+      {
+        "name": "The Condensed Digits Rule",
+        "body": "`.figures` applies only to the number in \"20 min ago\"; the unit stays at normal width so it never reads as one word.",
+        "section": "typography"
+      },
+      {
+        "name": "The Mono Id Rule",
+        "body": "A project's id, a branch, a hash, or a path is always set in the code face, so it can be read and copied exactly.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Ground Rule",
+        "body": "Depth is drawn with rules and fills, not shadows: a 1px rule separates rows and cards, the heavier rule-strong underlines section headings and table heads, and a selected card gets a 1px info ring. Cards, tables, and the board carry no shadow. Form controls keep the component library's hairline `shadow-xs`; popovers and menus use `shadow-md`, and dialogs and sheets `shadow-lg`, because they genuinely sit above the page.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** write every status as a glyph and a word.",
+      "**Do** keep red for failed and late; use amber for anything waiting.",
+      "**Do** set times and counts in condensed tabular figures, and only those.",
+      "**Do** separate with hairline rules and alignment rather than boxes.",
+      "**Do** add a field to the backend model with a `slot` or `columns` hint instead of hand-placing it in a component."
+    ],
+    "donts": [
+      "**Don't** put a chart in every tile or a sparkline on a flat series.",
+      "**Don't** use signal red for drift, parked work, or unread counts.",
+      "**Don't** add shadows to cards or tables.",
+      "**Don't** introduce a second display face or decorative imagery; this build is code-led and ships no rasters.",
+      "**Don't** let a layout scroll sideways on a phone; give grids a shrinkable base column."
+    ]
+  }
+}
