@@ -75,7 +75,7 @@ done = true
 id = "web-ui"
 title = "Overview, project page, fork, standards, jobs, settings, schema renderer"
 weight = 5
-done = false
+done = true
 
 [[v1.milestones]]
 id = "project-services"
@@ -87,13 +87,13 @@ done = true
 id = "notifications-runs"
 title = "Events, OS notifications, forge runs view, reports"
 weight = 2
-done = false
+done = true
 
 [[v1.milestones]]
 id = "hardening"
 title = "Empty and error states, performance, docs"
 weight = 2
-done = false
+done = true
 
 [[checks]]
 id = "pytest"
