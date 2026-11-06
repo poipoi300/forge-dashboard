@@ -34,8 +34,9 @@ export function relative(atSeconds: number, nowMs: number): string {
   const seconds = Math.abs(delta);
   let text: string;
   if (seconds < 45) text = future ? "under a minute" : "just now";
-  else if (seconds < HOUR) text = `${Math.round(seconds / MINUTE)} min`;
-  else if (seconds < DAY) text = `${Math.floor(seconds / HOUR)} h`;
+  else if (Math.round(seconds / MINUTE) < 60) text = `${Math.round(seconds / MINUTE)} min`;
+  // Past the minute rounding, anything under two hours is "1 h" (3570 s included).
+  else if (seconds < DAY) text = `${Math.max(1, Math.floor(seconds / HOUR))} h`;
   else if (seconds < DAY * 14) text = `${Math.floor(seconds / DAY)} d`;
   else if (seconds < DAY * 60) text = `${Math.floor(seconds / (DAY * 7))} wk`;
   else text = `${Math.floor(seconds / (DAY * 30))} mo`;
@@ -45,16 +46,18 @@ export function relative(atSeconds: number, nowMs: number): string {
 
 /** A compact duration: "850 ms", "42 s", "4 min 12 s", "1 h 02 min". */
 export function duration(seconds: number): string {
-  if (seconds < 1) return `${Math.round(seconds * 1000)} ms`;
-  if (seconds < MINUTE) return `${Math.round(seconds)} s`;
-  if (seconds < HOUR) {
-    const minutes = Math.floor(seconds / MINUTE);
-    const rest = Math.round(seconds % MINUTE);
+  // Round to the shown precision first, then split, so no part ever reads "60".
+  if (Math.round(seconds * 1000) < 1000) return `${Math.round(seconds * 1000)} ms`;
+  const wholeSeconds = Math.round(seconds);
+  if (wholeSeconds < MINUTE) return `${wholeSeconds} s`;
+  if (wholeSeconds < HOUR) {
+    const minutes = Math.floor(wholeSeconds / MINUTE);
+    const rest = wholeSeconds % MINUTE;
     return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
   }
-  const hours = Math.floor(seconds / HOUR);
-  const minutes = Math.round((seconds % HOUR) / MINUTE);
-  return `${hours} h ${String(minutes).padStart(2, "0")} min`;
+  const wholeMinutes = Math.round(seconds / MINUTE);
+  const hours = Math.floor(wholeMinutes / 60);
+  return `${hours} h ${String(wholeMinutes % 60).padStart(2, "0")} min`;
 }
 
 /** Wall-clock "14:07" for the departures board. */

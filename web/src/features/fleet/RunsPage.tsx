@@ -118,6 +118,11 @@ export function RunsPage() {
                               title: `${run.name} · ${step.name}`,
                             })
                           }
+                          aria-current={
+                            selected?.step === step.stem && selected.project === run.name
+                              ? "true"
+                              : undefined
+                          }
                           className={cn(
                             "grid w-full grid-cols-[1.5rem_minmax(0,1fr)_6rem_4.5rem] items-center gap-2 px-3 py-1 text-left hover:bg-hover",
                             selected?.step === step.stem &&

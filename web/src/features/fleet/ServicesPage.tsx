@@ -203,12 +203,19 @@ export function ServicesPage() {
               {machine.disks.map((disk) =>
                 disk.total ? (
                   <div key={disk.mount} className="flex flex-col gap-0.5">
-                    <Gauge
-                      label={`Disk ${disk.mount}`}
-                      used={disk.total - (disk.free ?? 0)}
-                      total={disk.total}
-                      text={`${bytes(disk.free ?? 0)} free`}
-                    />
+                    {disk.free === null ? (
+                      <p className="flex justify-between text-xs text-ink-3">
+                        <span>Disk {disk.mount}</span>
+                        <span>free space unknown</span>
+                      </p>
+                    ) : (
+                      <Gauge
+                        label={`Disk ${disk.mount}`}
+                        used={disk.total - disk.free}
+                        total={disk.total}
+                        text={`${bytes(disk.free)} free`}
+                      />
+                    )}
                     {disk.project_ids.length ? (
                       <span className="text-2xs text-ink-3">
                         {disk.project_ids.length} projects here

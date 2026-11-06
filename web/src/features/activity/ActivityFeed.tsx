@@ -8,7 +8,7 @@ import { onEvent } from "@/api/stream";
 import { EmptyState, ErrorState, LoadingRows } from "@/components/states";
 import { StatusMark } from "@/components/status";
 import { Button } from "@/components/ui/button";
-import { clockTime } from "@/lib/time";
+import { clockTime, useNow } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { Tone } from "@/schema/schema";
 
@@ -34,9 +34,9 @@ export const ACTIVITY_SOURCES = [
   { id: "jobs", label: "Jobs" },
 ] as const;
 
-function dayLabel(ts: number): string {
+function dayLabel(ts: number, nowMs: number): string {
   const date = new Date(ts * 1000);
-  const today = new Date();
+  const today = new Date(nowMs);
   const yesterday = new Date(today.getTime() - 86_400_000);
   if (date.toDateString() === today.toDateString()) return "Today";
   if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
@@ -62,6 +62,7 @@ export function ActivityFeed({
   showProject?: boolean;
 }) {
   const [services, setServices] = useState<string[]>([]);
+  const now = useNow();
   const tick = usePersistedTick();
   const query = useInfiniteQuery({
     queryKey: ["activity", projectId, services, tick],
@@ -84,7 +85,7 @@ export function ActivityFeed({
   const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
   const days: { label: string; entries: Entry[] }[] = [];
   for (const entry of entries) {
-    const label = dayLabel(entry.ts);
+    const label = dayLabel(entry.ts, now);
     const last = days[days.length - 1];
     if (last?.label === label) last.entries.push(entry);
     else days.push({ label, entries: [entry] });

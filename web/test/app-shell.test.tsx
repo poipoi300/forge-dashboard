@@ -130,7 +130,7 @@ describe("the navigation rail", () => {
     renderApp("/nope");
     seedStream({ events: makeEventsState({ unread: 4 }) });
     const notifications = screen.getByRole("link", { name: /Notifications/ });
-    expect(notifications.getAttribute("href")).toBe("/activity?notifications=1");
+    expect(notifications.getAttribute("href")).toBe("/activity");
     expect(within(notifications).getByText("4")).toBeTruthy();
   });
 
@@ -216,7 +216,7 @@ describe("the small-screen menu", () => {
     await user.click(screen.getByRole("button", { name: "Open sections" }));
     const sheet = await screen.findByRole("dialog");
     await user.click(within(sheet).getByRole("link", { name: /Notifications/ }));
-    expect(location()).toBe("/activity?notifications=1");
+    expect(location()).toBe("/activity");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 

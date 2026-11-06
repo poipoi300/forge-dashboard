@@ -151,13 +151,17 @@ export function FieldInput({
   root,
   value,
   onChange,
+  id: givenId,
 }: {
   field: Field;
   root: JsonSchema;
   value: unknown;
   onChange: (v: unknown) => void;
+  /** The control's id, so a surrounding <label htmlFor> names it. */
+  id?: string;
 }) {
-  const id = useId();
+  const ownId = useId();
+  const id = givenId ?? ownId;
   const kind = kindOf(field.schema, root);
   if (kind === "union")
     return <UnionField field={field} root={root} value={value} onChange={onChange} />;
@@ -197,28 +201,44 @@ function FieldRow({
   const block = kind === "object" || kind === "union" || (kind === "array" && field.ui.columns);
   const label = labelOf(field.name, field.schema);
   const help = field.ui.help ?? field.schema.description;
+  const id = useId();
+  const required = field.required && !field.nullable && field.schema.default === undefined;
   if (kind === "boolean") {
     return (
       <div className="flex items-start justify-between gap-6 py-1" data-field={field.name}>
         <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">{label}</span>
+          <label htmlFor={id} className="text-sm font-medium">
+            {label}
+          </label>
           <Help text={help} />
         </div>
-        <FieldInput field={field} root={root} value={value} onChange={onChange} />
+        <FieldInput field={field} root={root} value={value} onChange={onChange} id={id} />
       </div>
     );
   }
-  return (
-    <div className={cn("flex flex-col gap-1.5", block && "gap-2")} data-field={field.name}>
-      <span className="text-sm font-medium">
-        {label}
-        {field.required && !field.nullable && field.schema.default === undefined ? (
-          <span className="ml-1 text-signal-ink" title="Required">
-            *
-          </span>
-        ) : null}
-      </span>
-      <FieldInput field={field} root={root} value={value} onChange={onChange} />
+  const caption = (
+    <>
+      {label}
+      {required ? (
+        <span className="ml-1 text-signal-ink" title="Required">
+          *
+        </span>
+      ) : null}
+    </>
+  );
+  // A block (object, union, list of rows) holds many controls: its caption names the group instead.
+  return block ? (
+    <fieldset className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0" data-field={field.name}>
+      <legend className="mb-2 p-0 text-sm font-medium">{caption}</legend>
+      <FieldInput field={field} root={root} value={value} onChange={onChange} id={id} />
+      <Help text={help} />
+    </fieldset>
+  ) : (
+    <div className="flex flex-col gap-1.5" data-field={field.name}>
+      <label htmlFor={id} className="text-sm font-medium">
+        {caption}
+      </label>
+      <FieldInput field={field} root={root} value={value} onChange={onChange} id={id} />
       <Help text={help} />
     </div>
   );
@@ -260,7 +280,7 @@ function ObjectFields({
     <div className={cn("flex flex-col", nested ? "gap-3" : "gap-6")}>
       {[...groups.entries()].map(([group, list]) =>
         group && !nested ? (
-          <fieldset key={group} className="flex flex-col gap-4">
+          <fieldset key={group} data-group={group} className="flex flex-col gap-4">
             <legend className="mb-3 w-full border-b border-rule pb-1.5 text-sm font-semibold">
               {group}
             </legend>

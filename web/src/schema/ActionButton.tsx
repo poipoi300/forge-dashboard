@@ -291,7 +291,11 @@ export function ActionButton({
       className={className}
       title={title ?? descriptor?.description ?? undefined}
       disabled={!descriptor || disabled || busy}
-      onClick={() => run(request)}
+      onClick={(event) => {
+        // The click is the action: it must not also select the row or card that holds the button.
+        event.stopPropagation();
+        run(request);
+      }}
       data-action={`${request.service}.${request.action}`}
     >
       {busy ? <Loader2 className="animate-spin" /> : icon}

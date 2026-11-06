@@ -49,6 +49,7 @@ function MetricHistory({
     <QueryState query={history}>
       {(data) => {
         const numeric = data.points.filter((point) => typeof point.value === "number");
+        // A chart needs two numeric readings; until then the recent readings stand in.
         if (numeric.length < 2) {
           const recent = data.points.slice(-6).reverse();
           return recent.length ? (
@@ -71,7 +72,6 @@ function MetricHistory({
           ) : (
             <p className="text-xs text-ink-3">No readings yet.</p>
           );
-          // A chart needs two numeric readings; until then the list above stands in.
         }
         return (
           <TrendChart

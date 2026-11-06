@@ -1,7 +1,7 @@
 // Small data primitives shared by the schema renderer and bespoke views.
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
-import { homeRelative } from "@/lib/format";
+import { homeRelative, plural } from "@/lib/format";
 import { absolute, relative, useNow } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { Tone } from "@/schema/schema";
@@ -161,7 +161,7 @@ export function Sparkline({
       height={height}
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label={`${label}: ${points.length} readings, latest ${points[points.length - 1]}`}
+      aria-label={`${label}: ${plural(points.length, "reading")}, latest ${points[points.length - 1]}`}
       className="shrink-0 overflow-visible"
     >
       <title>{`${label}: ${points.join(", ")}`}</title>

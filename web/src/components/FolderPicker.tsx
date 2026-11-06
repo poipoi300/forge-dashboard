@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, CornerLeftUp, Folder, FolderGit2, HardDrive } from "lucide-react";
 import { useEffect, useState } from "react";
 import { call } from "@/api/client";
+import { errorText } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +15,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { homeRelative } from "@/lib/format";
+
+/** The folder above `path`, or null at a drive or filesystem root (which goes back to "This machine"). */
+export function parentOf(path: string): string | null {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (cut <= 0) return null;
+  const parent = trimmed.slice(0, cut);
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}
 
 export function FolderPicker({
   open,
@@ -46,18 +56,21 @@ export function FolderPicker({
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-80 overflow-y-auto rounded-md border border-rule">
-          {listing.data?.parent !== undefined && path !== null ? (
+          {path !== null ? (
             <button
               type="button"
               className="flex w-full items-center gap-2 border-b border-rule px-3 py-1.5 text-left text-sm hover:bg-hover"
-              onClick={() => setPath(listing.data?.parent ?? null)}
+              // An unreadable folder has no listing, so its parent comes from the path itself.
+              onClick={() => setPath(listing.data ? (listing.data.parent ?? null) : parentOf(path))}
             >
               <CornerLeftUp className="size-4 text-ink-3" />
               Up
             </button>
           ) : null}
           {listing.isError ? (
-            <p className="px-3 py-3 text-sm text-signal-ink">{String(listing.error)}</p>
+            <p className="px-3 py-3 text-sm text-signal-ink">
+              This folder cannot be opened: {errorText(listing.error)}
+            </p>
           ) : listing.data?.entries.length === 0 ? (
             <p className="px-3 py-3 text-sm text-ink-3">No subfolders.</p>
           ) : (

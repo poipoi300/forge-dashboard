@@ -221,7 +221,7 @@ describe("ActivityPage timeline", () => {
     const { user, location } = renderApp("/");
     seedStream({ events: makeEventsState({ unread: 1 }) });
     await user.click(await screen.findByRole("link", { name: /Notifications\s*1/ }));
-    expect(location()).toBe("/activity?notifications=1");
+    expect(location()).toBe("/activity");
     expect(await screen.findByText("Fork conflict")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Mark 1 read" })).toBeTruthy();
   });

@@ -4,6 +4,7 @@
 // hairline grid, one y-axis, a crosshair that snaps to the nearest reading,
 // and a table view carrying every value without hover.
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { plural } from "@/lib/format";
 import { absolute } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
@@ -174,7 +175,7 @@ export function TrendChart({
               width={width}
               height={height}
               role="img"
-              aria-label={`${title}: ${sorted.length} readings, latest ${lastPoint ? format(lastPoint.value) : ""}`}
+              aria-label={`${title}: ${plural(sorted.length, "reading")}, latest ${lastPoint ? format(lastPoint.value) : ""}`}
               className="block touch-none"
               onPointerMove={(event) => nearest(event.clientX, event.currentTarget)}
               onPointerLeave={() => setHover(null)}

@@ -14,7 +14,11 @@ function renderGallery(overrides: Record<string, unknown> = {}) {
 
 const fieldNames = () =>
   [...document.querySelectorAll("[data-field]")].map((row) => row.getAttribute("data-field"));
-const legends = () => [...document.querySelectorAll("legend")].map((legend) => legend.textContent);
+// Group headings only: block fields (objects, unions, row lists) caption themselves with a legend too.
+const legends = () =>
+  [...document.querySelectorAll("fieldset[data-group] > legend")].map(
+    (legend) => legend.textContent,
+  );
 const nullable = (schema: JsonSchema): JsonSchema => ({ anyOf: [schema, { type: "null" }] });
 
 describe("SchemaForm layout", () => {

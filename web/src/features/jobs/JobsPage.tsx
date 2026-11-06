@@ -30,6 +30,7 @@ function JobRow({ job, selected }: { job: Job; selected?: boolean }) {
     <li>
       <Link
         href={`/jobs/${job.id}`}
+        aria-current={selected ? "true" : undefined}
         className={cn(
           "grid grid-cols-[minmax(0,1fr)_7rem_5rem_6rem] items-center gap-3 px-3 py-1.5 hover:bg-hover",
           selected && "bg-select",
@@ -133,12 +134,16 @@ function JobDetail({ jobId }: { jobId: string }) {
           ) : null}
         </header>
       ) : null}
-      <LogView
-        lines={log.lines}
-        label="Job log"
-        live={job?.status === "running"}
-        className="h-[min(36rem,60vh)]"
-      />
+      {log.error ? (
+        <ErrorState error={log.error} title="The job log could not be read" />
+      ) : (
+        <LogView
+          lines={log.lines}
+          label="Job log"
+          live={job?.status === "running"}
+          className="h-[min(36rem,60vh)]"
+        />
+      )}
       {detail.data?.result ? (
         <details>
           <summary className="cursor-pointer text-xs text-ink-2">Result</summary>

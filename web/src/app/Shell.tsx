@@ -155,7 +155,7 @@ function Rail({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <div className="mt-auto flex flex-col gap-2">
         <Link
-          href="/activity?notifications=1"
+          href="/activity"
           onClick={onNavigate}
           className="flex h-8 items-center gap-2.5 rounded-sm px-2.5 text-sm text-board-ink-2 hover:bg-board-2 hover:text-board-ink"
         >
