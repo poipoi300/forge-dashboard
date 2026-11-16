@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from conftest import MANIFEST, Git, write_files
+from conftest import MANIFEST, Git, write_files, write_hook
 from pydantic import ValidationError
 from testing_support import fake_harness_config
 
@@ -393,7 +393,7 @@ async def test_a_rebase_git_refuses_to_start_fails_the_run_instead_of_landing_an
     await discovery.add_project(PathInput(path=str(repos.checkout)))
     await forks.set_policy(PolicyInput(project_id="forked", policy=ForkPolicy(strategy="rebase")))
     hook = repos.checkout / ".git" / "hooks" / "pre-rebase"
-    hook.write_text("#!/bin/sh\necho 'rebase refused' >&2\nexit 1\n", encoding="utf-8", newline="\n")
+    write_hook(hook, "#!/bin/sh\necho 'rebase refused' >&2\nexit 1\n")
     main_before = git(repos.checkout, "rev-parse", "main")
 
     status, summary = await _sync(forks, jobs)
@@ -468,7 +468,7 @@ async def test_a_result_that_lacks_upstream_is_never_landed(forks_env: ForksEnv,
 def _block_commits(checkout: Path) -> Path:
     """A pre-commit hook in the user's repo (shared by its worktrees) that rejects every commit."""
     hook = checkout / ".git" / "hooks" / "pre-commit"
-    hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n", encoding="utf-8", newline="\n")
+    write_hook(hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n")
     return hook
 
 

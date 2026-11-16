@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
-from conftest import MANIFEST, Git
+from conftest import MANIFEST, Git, write_hook
 from pydantic import JsonValue
 from testing_support import fake_harness_config, wait_for
 
@@ -313,7 +313,7 @@ async def test_an_error_after_the_worktree_exists_fails_the_run_and_leaves_it_di
     alpha = make_project("Alpha")
     await discovery.add_project(PathInput(path=str(alpha)))
     hook = alpha / ".git" / "hooks" / "pre-commit"
-    hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n", encoding="utf-8", newline="\n")
+    write_hook(hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n")
 
     final = await jobs.wait((await agents.update_dependencies(UpdateDepsInput(project_id="alpha"))).job_id)
 

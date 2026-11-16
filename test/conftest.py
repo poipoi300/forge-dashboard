@@ -47,6 +47,11 @@ async def started_runtime(data_paths: DataPaths) -> AsyncIterator[Runtime]:
 def _isolated_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """No test ever touches the real per-user data dir."""
     monkeypatch.setenv("FORGE_DASHBOARD_DATA_DIR", str(tmp_path / "default-data"))
+    # The fake harness resolves two-sided markers, independent of user Git defaults.
+    config_index = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", str(config_index + 1))
+    monkeypatch.setenv(f"GIT_CONFIG_KEY_{config_index}", "merge.conflictStyle")
+    monkeypatch.setenv(f"GIT_CONFIG_VALUE_{config_index}", "merge")
     yield
 
 
@@ -90,6 +95,13 @@ class Git:
 @pytest.fixture
 def git() -> Git:
     return Git()
+
+
+def write_hook(path: Path, content: str) -> Path:
+    """Write a Git hook with LF endings and executable permissions on POSIX."""
+    path.write_text(content, encoding="utf-8", newline="\n")
+    path.chmod(0o755)
+    return path
 
 
 def write_files(root: Path, files: dict[str, str]) -> None:

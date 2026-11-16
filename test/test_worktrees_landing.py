@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import Git, write_files
+from conftest import Git, write_files, write_hook
 
 from forge_dashboard import gitops, landing, worktrees
 from forge_dashboard.branchwork import INTERRUPTED, BranchRun, BranchRunState, BranchWork
@@ -59,7 +59,7 @@ async def test_commit_all_concludes_a_merge_whose_tree_equals_head(tmp_path: Pat
 async def test_commit_all_raises_with_the_hooks_output_when_the_commit_fails_twice(tmp_path: Path, git: Git) -> None:
     repo = make_repo(tmp_path, git)
     hook = repo / ".git" / "hooks" / "pre-commit"
-    hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n", encoding="utf-8", newline="\n")
+    write_hook(hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n")
     (repo / "new.txt").write_text("x\n", encoding="utf-8")
 
     with pytest.raises(gitops.GitError, match="hook says no"):
