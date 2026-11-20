@@ -2,7 +2,7 @@
 
 The forge repo is the standards source and is read live on every evaluation.
 Bring-up runs on a `forge-standards/<stamp>` worktree branch: deterministic
-fixes first (tools, CLAUDE.md, .gitignore, AGENTS.md working-rule sections,
+fixes first (CLAUDE.md, .gitignore, links to forge's working-rule sections,
 the template revision; hooks are installed in the main repo), then the
 harness with a generated brief for what only judgment can fix, then
 compliance and the project's checks again, and a diff for one-click merge.
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 CONTRACT_DOC = Path(__file__).resolve().parents[3] / "docs" / "project-manifest.md"
 ADOPT_ATTEMPTS = 3
 EVALUATE_DEBOUNCE_S = 1.0
-# The working-rule sections of forge's AGENTS.md that travel to every project unchanged.
+# The working-rule sections of forge's AGENTS.md that every project links at its pinned commit.
 TRAVELLING_SECTIONS = ["A note from the maintainer", "Verifying", "Commits", "Taste"]
 
 
@@ -69,7 +69,7 @@ class ProjectStandards(BaseModel):
 class StandardsConfig(BaseModel):
     travelling_sections: list[str] = Field(
         default_factory=lambda: list(TRAVELLING_SECTIONS),
-        json_schema_extra=ui(widget="tags", help="AGENTS.md sections that must equal forge's text."),
+        json_schema_extra=ui(widget="tags", help="forge's AGENTS.md sections every project must link."),
     )
 
 
@@ -128,6 +128,8 @@ def standards_brief(
     revision: str | None,
 ) -> str:
     """The prompt for the judgment part of a bring-up."""
+    slug = forge.slug() or "<forge's GitHub owner/repo>"
+    pin = revision or "<forge's HEAD commit>"
     hooks = "\n".join(f"- {language}: {', '.join(ids)}" for language, ids in rules.LANGUAGE_HOOKS.items())
     failing_text = "\n".join(
         f"- {check.id}: {check.title}. {check.detail}" + (f"\n```diff\n{check.diff}\n```" if check.diff else "")
@@ -139,7 +141,18 @@ def standards_brief(
                 "- Rewrite AGENTS.md's project-specific sections for this project (the intro, what makes it special, "
                 "the glossary, the ways to hurt yourself, commands, and where code lives)."
             ),
-            f"- Keep these working-rule sections verbatim from forge: {', '.join(travelling)}.",
+            (
+                f"- Never copy forge's files or sections into the project. AGENTS.md links forge's working-rule "
+                f"sections ({', '.join(travelling)}); the dashboard already wrote those links."
+            ),
+            (
+                f"- Reference forge's published hooks (`.pre-commit-hooks.yaml` below) from .pre-commit-config.yaml "
+                f"as `repo: https://github.com/{slug}` with `rev: {pin}`. Keep project-specific gates as local hooks."
+            ),
+            (
+                f"- CI is a workflow whose job is `uses: {slug}/{rules.FORGE_WORKFLOW}@{pin}`, passing only the "
+                "project's inputs (OS matrix, system packages, toolchains). Both pins name the same commit."
+            ),
             (
                 "- Adapt the gates to the project's languages using the conventional hook ids, and keep the push stage "
                 f"as the single hook `{rules.PUSH_HOOK}`."
@@ -155,7 +168,8 @@ def standards_brief(
     forge_parts = [
         ("FORGE_AGENTS_MD", "AGENTS.md"),
         ("FORGE_PRECOMMIT", ".pre-commit-config.yaml"),
-        ("FORGE_CI", ".github/workflows/ci.yml"),
+        ("FORGE_HOOKS", ".pre-commit-hooks.yaml"),
+        ("FORGE_GATES_WORKFLOW", rules.FORGE_WORKFLOW),
         ("FORGE_PYPROJECT", "pyproject.toml"),
         ("FORGE_GITIGNORE", ".gitignore"),
     ]
@@ -349,12 +363,6 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
     async def apply_deterministic(self, worktree: Path, forge: ForgeSource, revision: str | None) -> list[str]:
         """Fix what needs no judgment; returns what changed."""
         changed: list[str] = []
-        for relative in rules.TOOL_FILES:
-            source, target = forge.root / relative, worktree / relative
-            if source.is_file() and (not target.is_file() or target.read_bytes() != source.read_bytes()):
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, target)
-                changed.append(relative)
         claude = worktree / "CLAUDE.md"
         if not claude.is_file():
             claude.write_text(forge.text("CLAUDE.md") or "@AGENTS.md\n", encoding="utf-8", newline="\n")
@@ -370,12 +378,13 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
             ignore.write_text(prefix + "".join(f"{line}\n" for line in missing), encoding="utf-8", newline="\n")
             changed.append(".gitignore")
         agents = worktree / "AGENTS.md"
-        if agents.is_file():
+        slug = forge.slug()
+        if agents.is_file() and slug is not None and revision is not None:
             text = agents.read_text(encoding="utf-8")
-            synced = rules.apply_section_sync(text, forge.text("AGENTS.md") or "", self.config.travelling_sections)
-            if synced != text:
-                agents.write_text(synced, encoding="utf-8", newline="\n")
-                changed.append("AGENTS.md (working-rule sections)")
+            linked = rules.apply_rule_links(text, slug, revision, self.config.travelling_sections)
+            if linked != text:
+                agents.write_text(linked, encoding="utf-8", newline="\n")
+                changed.append("AGENTS.md (links to forge's working rules)")
         manifest = worktree / MANIFEST_FILENAME
         if revision is not None and manifest.is_file() and load_manifest(worktree).valid:
             updated = set_template_revision(manifest.read_text(encoding="utf-8"), revision, datetime.now(tz=UTC))

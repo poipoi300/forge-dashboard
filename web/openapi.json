@@ -21247,7 +21247,7 @@
             "type": "array",
             "title": "Travelling Sections",
             "x-ui": {
-              "help": "AGENTS.md sections that must equal forge's text.",
+              "help": "forge's AGENTS.md sections every project must link.",
               "widget": "tags"
             }
           }

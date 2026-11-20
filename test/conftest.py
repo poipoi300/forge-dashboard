@@ -208,6 +208,52 @@ repos:
         stages: [pre-push]
 """
 
+FORGE_HOOKS = """
+- id: trailing-whitespace
+  name: trailing whitespace
+  entry: forge-hygiene trailing-whitespace
+  language: python
+  types: [text]
+- id: end-of-file-fixer
+  name: end of file fixer
+  entry: forge-hygiene end-of-file-fixer
+  language: python
+  types: [text]
+- id: check-merge-conflict
+  name: merge conflicts
+  entry: forge-hygiene check-merge-conflict
+  language: python
+  types: [text]
+- id: check-toml
+  name: toml
+  entry: forge-hygiene check-toml
+  language: python
+  types: [toml]
+- id: tests-and-diff-coverage
+  name: tests
+  entry: forge-coverage-gate
+  language: python
+  pass_filenames: false
+  stages: [pre-push]
+"""
+
+FORGE_GATES_WORKFLOW = """
+name: forge gates
+on:
+  workflow_call:
+    inputs:
+      os:
+        type: string
+        default: '["ubuntu-24.04"]'
+jobs:
+  lane:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: uv run --locked pre-commit run --hook-stage pre-commit --all-files
+"""
+
+FORGE_URL = "https://github.com/owner/forge"
+
 FORGE_CI = """
 name: CI
 on:
@@ -242,7 +288,7 @@ strict = true
 
 @pytest.fixture
 def forge_repo(tmp_path: Path, git: Git) -> Path:
-    """A minimal forge: the signature files, travelling AGENTS.md sections, gate configs, and tools."""
+    """A minimal forge: the signature files, working-rule AGENTS.md sections, gate configs, published hooks."""
     root = tmp_path / "forge"
     write_files(
         root,
@@ -255,8 +301,8 @@ def forge_repo(tmp_path: Path, git: Git) -> Path:
             "README.md": "# forge\n\n## Setup\n\nRun it.\n",
             ".pre-commit-config.yaml": FORGE_PRECOMMIT,
             ".github/workflows/ci.yml": FORGE_CI,
-            "tools/repo_hygiene.py": '"""Hygiene checks."""\nprint("hygiene")\n',
-            "tools/coverage_gate.sh": "#!/usr/bin/env bash\necho coverage\n",
+            ".github/workflows/gates.yml": FORGE_GATES_WORKFLOW,
+            ".pre-commit-hooks.yaml": FORGE_HOOKS,
             ".gitignore": "__pycache__/\n.venv/\n.coverage\n",
             "forge.toml": '[runner]\ndefault_harness = "claude"\nworkspace_root = "runs"\n\n'
             '[harness.claude]\ncommand = ["claude", "-p", "{prompt}"]\n',

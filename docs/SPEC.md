@@ -369,18 +369,19 @@ final list from forge's AGENTS.md and configs; at minimum:
 
 1. `forge.project.toml` present and valid.
 2. AGENTS.md present.
-3. AGENTS.md's travelling sections ("A note from the maintainer",
-   "Verifying", "Commits", "Taste") equal forge's current text, compared
-   section by section on headings.
+3. AGENTS.md links forge's working-rule sections ("A note from the
+   maintainer", "Verifying", "Commits", "Taste") at a pinned forge commit,
+   and carries no copy of them.
 4. CLAUDE.md imports AGENTS.md.
-5. `tools/repo_hygiene.py` and `tools/coverage_gate.sh` are byte-identical to
-   forge's.
-6. `.pre-commit-config.yaml` holds forge's base hook ids with matching
-   stages.
+5. `.pre-commit-config.yaml` references forge's repository at a pinned
+   commit SHA (`repo:`/`rev:`).
+6. Every hook forge publishes in `.pre-commit-hooks.yaml` is referenced from
+   that forge repo entry, with forge's stages.
 7. Each manifest language has its conventional gate hook ids (see the
    contract's hook-id conventions).
 8. pre-commit and pre-push hooks are installed in `.git/hooks`.
-9. A CI workflow exists and runs the CI-enforced gates.
+9. A CI job calls forge's reusable `gates.yml` at a commit SHA, the same
+   commit the hooks pin.
 10. Python projects: ruff and mypy configs are at least as strict as forge's
     (rule selection is a superset; mypy strict).
 11. A gate-registry mirror test exists.
@@ -395,7 +396,8 @@ commits since.
 **Bring up to standards.** A job on a worktree branch
 `forge-standards/<timestamp>`:
 
-1. Apply deterministic fixes: copy `tools/`, add CLAUDE.md, install hooks.
+1. Apply deterministic fixes: add CLAUDE.md, link forge's working-rule
+   sections at forge's HEAD, install hooks. Nothing of forge is copied.
    Hooks are installed in the main repo, not the worktree.
 2. Run the harness with a generated brief:
    - the failing checks with details;
