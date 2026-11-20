@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import textwrap
 import tomllib
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
@@ -57,7 +58,7 @@ def test_a_bare_repo_fails_almost_everything(forge_repo: Path, tmp_path: Path) -
 def _links(revision: str) -> str:
     base = f"{FORGE_URL}/blob/{revision}/AGENTS.md"
     return (
-        "## Working rules\n\n"
+        "## Working rules from forge\n\n"
         f"- [A note from the maintainer]({base}#a-note-from-the-maintainer)\n"
         f"- [Verifying]({base}#verifying)\n- [Commits]({base}#commits)\n- [Taste]({base}#taste)\n"
     )
@@ -148,7 +149,15 @@ def test_copies_of_forge_fail_every_reference_check(forge_repo: Path, tmp_path: 
 @pytest.mark.parametrize(
     ("hooks_rev", "ci_rev", "failing"),
     [
-        ("main", "HEAD", {"forge-hooks": "rev main is not a commit SHA", "ci": "pins differ: hooks main, CI HEAD"}),
+        (
+            "main",
+            "HEAD",
+            {
+                "forge-hooks": "rev main is not a commit SHA",
+                "base-hooks": "needs one valid forge pin (see forge-hooks)",
+                "ci": "no single valid forge hook pin to compare with (see forge-hooks)",
+            },
+        ),
         ("HEAD", "v1", {"ci": "gates.yml@v1 is not a commit SHA"}),
         ("HEAD", "0" * 40, {"ci": "pins differ: hooks HEAD, CI 0000000000000000000000000000000000000000"}),
     ],
@@ -163,6 +172,186 @@ def test_floating_or_disagreeing_pins_fail(
     report = rules.evaluate(project, ForgeSource(forge_repo), travelling_sections=TRAVELLING, forge_head="abc")
     found = {check.id: check.detail for check in report.checks if check.result == "fail"}
     assert found == {key: value.replace("HEAD", head) for key, value in failing.items()}
+
+
+def _evaluate(project: Path, forge_repo: Path) -> dict[str, str]:
+    report = rules.evaluate(project, ForgeSource(forge_repo), travelling_sections=TRAVELLING, forge_head="abc")
+    return {check.id: check.detail for check in report.checks if check.result == "fail"}
+
+
+def _set_precommit(project: Path, text: str) -> None:
+    (project / ".pre-commit-config.yaml").write_text(textwrap.dedent(text).lstrip("\n"), encoding="utf-8")
+
+
+FORGE_HOOK_IDS = ["trailing-whitespace", "end-of-file-fixer", "check-merge-conflict", "check-toml"]
+
+
+def _forge_entry(revision: str, *, repo: str = FORGE_URL, push_stages: str = "") -> str:
+    hooks = "".join(f"\n      - id: {hook}" for hook in FORGE_HOOK_IDS)
+    return f"""
+  - repo: {repo}
+    rev: {revision}
+    hooks:{hooks}
+      - id: tests-and-diff-coverage{push_stages}"""
+
+
+@pytest.mark.parametrize(
+    ("default_stages", "push_stages", "differs"),
+    [
+        ("[pre-commit, pre-push]", "", "check-merge-conflict, check-toml, end-of-file-fixer, trailing-whitespace"),
+        (None, "", "check-merge-conflict, check-toml, end-of-file-fixer, trailing-whitespace"),
+        ("[pre-commit]", "\n        stages: []", "tests-and-diff-coverage"),
+        ("[pre-commit]", "\n        stages: [pre-push]", None),
+    ],
+)
+def test_hook_stages_resolve_as_pre_commit_resolves_them(
+    forge_repo: Path, tmp_path: Path, git: Git, default_stages: str | None, push_stages: str, differs: str | None
+) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    defaults = f"default_stages: {default_stages}\n" if default_stages else ""
+    _set_precommit(project, defaults + "repos:" + _forge_entry(head, push_stages=push_stages) + "\n")
+    failing = _evaluate(project, forge_repo)
+    assert failing.get("base-hooks") == (f"stage differs: {differs}" if differs else None)
+
+
+def test_a_local_hook_cannot_mask_a_forge_hook_at_the_wrong_stage(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    forge_entry = _forge_entry(head, push_stages="\n        stages: [pre-commit]")
+    local = """
+  - repo: local
+    hooks:
+      - id: tests-and-diff-coverage
+        name: tests
+        entry: run-tests
+        language: system
+        stages: [pre-push]"""
+    for order in (forge_entry + local, local + forge_entry):
+        _set_precommit(project, "default_stages: [pre-commit]\nrepos:" + order + "\n")
+        assert _evaluate(project, forge_repo)["base-hooks"] == "stage differs: tests-and-diff-coverage"
+
+
+def test_several_forge_pins_leave_nothing_to_compare_ci_with(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    other = "ab" * 20
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    _set_precommit(project, "default_stages: [pre-commit]\nrepos:" + _forge_entry(head) + _forge_entry(other) + "\n")
+    failing = _evaluate(project, forge_repo)
+    assert failing["forge-hooks"] == f"forge is pinned at several revs: {', '.join(sorted([head, other]))}"
+    assert failing["ci"] == "no single valid forge hook pin to compare with (see forge-hooks)"
+
+
+def test_a_pin_must_be_a_forge_commit_that_publishes_the_hooks_and_workflow(
+    forge_repo: Path, tmp_path: Path, git: Git
+) -> None:
+    unknown = "cd" * 20
+    project = _referencing_project(tmp_path, git, hooks_rev=unknown, ci_rev=unknown)
+    assert (
+        _evaluate(project, forge_repo)["forge-hooks"]
+        == f"forge commit {unknown} is not in forge's checkout (fetch forge)"
+    )
+    git(forge_repo, "rm", "-q", ".pre-commit-hooks.yaml", ".github/workflows/gates.yml")
+    bare = git.commit_all(forge_repo, "Unpublish")
+    project = _referencing_project(tmp_path / "bare", git, hooks_rev=bare, ci_rev=bare)
+    failing = _evaluate(project, forge_repo)
+    assert failing["forge-hooks"] == f"forge commit {bare} publishes no .pre-commit-hooks.yaml"
+    assert failing["base-hooks"] == "needs one valid forge pin (see forge-hooks)"
+
+
+def test_ci_needs_the_workflow_at_the_pinned_commit(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    git(forge_repo, "rm", "-q", ".github/workflows/gates.yml")
+    revision = git.commit_all(forge_repo, "Drop the workflow")
+    project = _referencing_project(tmp_path, git, hooks_rev=revision, ci_rev=revision)
+    assert _evaluate(project, forge_repo) == {"ci": f"forge commit {revision} has no .github/workflows/gates.yml"}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "repos: 1\n",
+        "default_stages: true\nrepos: []\n",
+        "repos:\n  - repo: local\n    hooks: 1\n",
+        "repos:\n  - repo: local\n    hooks:\n      - id: x\n        stages: 1\n",
+    ],
+)
+def test_malformed_precommit_config_fails_instead_of_crashing(
+    forge_repo: Path, tmp_path: Path, git: Git, config: str
+) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    _set_precommit(project, config)
+    assert _evaluate(project, forge_repo)["forge-hooks"] == "no valid .pre-commit-config.yaml"
+
+
+def test_an_unquoted_numeric_rev_is_not_a_commit_sha(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    _set_precommit(
+        project,
+        "default_stages: [pre-commit]\nrepos:"
+        + _forge_entry("1" * 40).replace(f"rev: {'1' * 40}", f"rev: {1 * 10**39}")
+        + "\n",
+    )
+    assert _evaluate(project, forge_repo)["forge-hooks"] == f"rev {10**39} is not a commit SHA"
+
+
+def test_owner_and_repository_names_match_case_insensitively(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    config = project / ".pre-commit-config.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(f"repo: {FORGE_URL}", "repo: git@github.com:Owner/Forge.git"),
+        encoding="utf-8",
+    )
+    workflow = project / ".github" / "workflows" / "ci.yml"
+    workflow.write_text(workflow.read_text(encoding="utf-8").replace("owner/forge/", "Owner/Forge/"), encoding="utf-8")
+    agents = project / "AGENTS.md"
+    agents.write_text(agents.read_text(encoding="utf-8").replace("owner/forge", "OWNER/forge"), encoding="utf-8")
+    assert _evaluate(project, forge_repo) == {}
+
+
+def test_only_yml_and_yaml_files_count_as_workflows(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    workflows = project / ".github" / "workflows"
+    (workflows / "ci.yml").rename(workflows / "ci.yignoredml")
+    assert _evaluate(project, forge_repo) == {"ci": "no job uses owner/forge/.github/workflows/gates.yml"}
+
+
+@pytest.mark.parametrize(
+    ("form", "passes"),
+    [
+        ("- [{name}]({url})", True),
+        ("- <{url}>", True),
+        ("- [{name}][ref-{n}]\n\n[ref-{n}]: {url}", True),
+        ("<!-- [{name}]({url}) -->", False),
+        ("```md\n[{name}]({url})\n```", False),
+        ("See {url} for the rules.", False),
+    ],
+)
+def test_rule_links_count_only_as_visible_markdown_links(
+    forge_repo: Path, tmp_path: Path, git: Git, form: str, passes: bool
+) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    lines = [
+        form.format(name=name, n=n, url=f"{FORGE_URL}/blob/{head}/AGENTS.md#{rules.section_anchor(name)}")
+        for n, name in enumerate(TRAVELLING)
+    ]
+    (project / "AGENTS.md").write_text("# Referencing\n\n## Rules\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    assert ("agents-sections" not in _evaluate(project, forge_repo)) is passes
+
+
+def test_rule_links_leave_fenced_examples_and_a_project_section_of_that_name(forge_repo: Path) -> None:
+    verifying = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))["Verifying"]
+    own = "## Working rules from forge\n\nOur own notes.\n"
+    example = f"## Examples\n\n```md\n{verifying}```\n"
+    text = f"# Mine\n\n{example}\n{own}\n{verifying.rstrip()}"
+    linked = rules.apply_rule_links(text, "owner/forge", "a" * 40, TRAVELLING)
+    assert example in linked and own in linked
+    assert linked.count("A task is done when the gates pass.") == 1, "the copy at EOF without a newline is gone"
+    assert linked.endswith(_links("a" * 40))
 
 
 def test_rule_links_replace_copied_sections_and_follow_the_revision(forge_repo: Path) -> None:
@@ -195,6 +384,7 @@ def test_the_brief_carries_failing_checks_rules_and_forge_text(forge_repo: Path,
         failing=report.failing,
         forge=ForgeSource(forge_repo),
         travelling=TRAVELLING,
+        slug="owner/forge",
         revision="abc",
     )
     assert brief.startswith("# Bring up to standards")
@@ -274,6 +464,31 @@ async def test_bring_up_fixes_deterministically_then_with_the_agent_on_a_branch(
     assert standing.report is not None and standing.behind == 0 and standing.report.template_revision == head
     facts = projects.summary("messy").standards
     assert facts is not None and facts.passing > before.passing and facts.forge_commits_behind == 0
+
+
+@pytest.mark.parametrize(
+    ("unpublish", "message"),
+    [
+        (("remote", "remove", "origin"), "no GitHub origin remote"),
+        (("rm", "-q", ".pre-commit-hooks.yaml"), "publishes no .pre-commit-hooks.yaml"),
+    ],
+)
+async def test_bring_up_is_refused_while_forge_cannot_be_referenced(
+    standards_env: tuple[StandardsService, ProjectsService, DiscoveryService, JobsService, AgentsService],
+    make_project: Callable[..., Path],
+    git: Git,
+    forge_repo: Path,
+    unpublish: tuple[str, ...],
+    message: str,
+) -> None:
+    standards, _projects, discovery, _jobs, agents = standards_env
+    git(forge_repo, *unpublish)
+    if unpublish[0] == "rm":
+        git.commit_all(forge_repo, "Unpublish")
+    await discovery.add_project(PathInput(path=str(make_project("Waiting"))))
+    with pytest.raises(ActionError, match=message):
+        await standards.bring_up(ProjectRef(project_id="waiting"))
+    assert (await agents.branch_runs(BranchRunsInput(project_id="waiting", kind="standards"))).runs == []
 
 
 async def test_forge_commits_since_the_revision_are_listed(

@@ -125,10 +125,10 @@ def standards_brief(
     failing: list[rules.ComplianceCheck],
     forge: ForgeSource,
     travelling: list[str],
+    slug: str,
     revision: str | None,
 ) -> str:
     """The prompt for the judgment part of a bring-up."""
-    slug = forge.slug() or "<forge's GitHub owner/repo>"
     pin = revision or "<forge's HEAD commit>"
     hooks = "\n".join(f"- {language}: {', '.join(ids)}" for language, ids in rules.LANGUAGE_HOOKS.items())
     failing_text = "\n".join(
@@ -422,6 +422,11 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
         if not record.is_git:
             raise ActionError(f"{record.path} is not a git repository", status=409)
         forge = self._require_forge()
+        slug = forge.slug()
+        if slug is None:
+            raise ActionError("forge's checkout has no GitHub origin remote for projects to reference", status=409)
+        if forge.published_hooks("HEAD") is None:
+            raise ActionError("forge publishes no .pre-commit-hooks.yaml at its HEAD", status=409)
 
         async def work(context: JobContext) -> JobOutcome:
             branch_work = self._agents.branch_work
@@ -458,6 +463,7 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
                         failing=agent_needed,
                         forge=forge,
                         travelling=travelling,
+                        slug=slug,
                         revision=head,
                     )
                     agent = await self._agents.run_agent(

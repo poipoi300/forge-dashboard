@@ -19,7 +19,7 @@ import tomllib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import yaml
 from pydantic import BaseModel, Field
@@ -41,11 +41,17 @@ LANGUAGE_HOOKS: dict[str, tuple[str, ...]] = {
 PUSH_HOOK = "tests-and-diff-coverage"
 FORGE_WORKFLOW = ".github/workflows/gates.yml"
 _COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+_REUSABLE = re.compile(r"([^/@]+/[^/@]+)/(\.github/workflows/[^@]+)@(.+)")
+_GENERATED_LINK = re.compile(r"- \[[^\]]+\]\(https://github\.com/[^/\s]+/[^/\s]+/blob/[0-9a-f]{40}/AGENTS\.md#[\w-]+\)")
 _GITHUB_REMOTE = re.compile(
     r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+/[^/]+?)(?:\.git)?/?"
 )
-_SECTION = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
-RULES_SECTION = "Working rules"
+_SECTION = re.compile(r"## (.+?)\s*$")
+_FENCE = re.compile(r" {0,3}(```|~~~)")
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+RULES_SECTION = "Working rules from forge"
+# pre-commit runs a hook that ends up with no stages at every stage.
+EVERY_STAGE = ("every stage",)
 
 
 class ComplianceCheck(BaseModel):
@@ -77,14 +83,38 @@ class ComplianceReport(BaseModel):
         return [check for check in self.checks if check.result == "fail"]
 
 
+def _fenced(lines: Iterable[str]) -> list[bool]:
+    """Whether each line belongs to a fenced code block (fence lines included)."""
+    flags: list[bool] = []
+    fence: str | None = None
+    for line in lines:
+        opener = _FENCE.match(line)
+        if opener and fence in (None, opener.group(1)):
+            fence = None if fence else opener.group(1)
+            flags.append(True)
+        else:
+            flags.append(fence is not None)
+    return flags
+
+
+def _section_spans(markdown: str) -> list[tuple[str | None, int, int]]:
+    """`(heading, start, end)` of each `## ` section outside fenced code; the preamble has heading None."""
+    lines = markdown.splitlines(keepends=True)
+    starts: list[tuple[str | None, int]] = [(None, 0)]
+    offset = 0
+    for line, fenced in zip(lines, _fenced(lines), strict=True):
+        if not fenced and (heading := _SECTION.match(line.rstrip("\r\n"))):
+            starts.append((heading.group(1), offset))
+        offset += len(line)
+    ends = [start for _, start in starts[1:]] + [len(markdown)]
+    return [(name, start, end) for (name, start), end in zip(starts, ends, strict=True)]
+
+
 def sections(markdown: str) -> dict[str, str]:
-    """`## Heading` -> the section text including its heading, up to the next `## `."""
-    found: dict[str, str] = {}
-    matches = list(_SECTION.finditer(markdown))
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
-        found[match.group(1)] = markdown[match.start() : end].rstrip() + "\n"
-    return found
+    """`## Heading` -> the section text including its heading, up to the next `## ` outside fenced code."""
+    return {
+        name: markdown[start:end].rstrip() + "\n" for name, start, end in _section_spans(markdown) if name is not None
+    }
 
 
 def _read(path: Path) -> str | None:
@@ -105,46 +135,65 @@ def _yaml(path: Path) -> object:
 
 
 def github_slug(url: str) -> str | None:
-    """`owner/repo` of a GitHub remote URL (https or ssh), or None for anything else."""
+    """Lower-cased `owner/repo` of a GitHub remote URL (https or ssh), or None for anything else."""
     match = _GITHUB_REMOTE.fullmatch(url.strip())
-    return match.group(1) if match else None
+    return match.group(1).lower() if match else None
 
 
 def section_anchor(heading: str) -> str:
-    """The fragment GitHub gives a Markdown heading."""
+    """The fragment GitHub gives a plain-text Markdown heading."""
     return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
 
 
-def precommit_repos(repo: Path) -> list[dict[str, object]]:
-    """The `repos` entries of `.pre-commit-config.yaml`, or none when it is missing or malformed."""
+def _strings(value: object) -> tuple[str, ...] | None:
+    """A YAML list of strings as a tuple, or None for any other shape."""
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        return None
+    return tuple(value)
+
+
+@dataclass(frozen=True)
+class PrecommitConfig:
+    """The parts of `.pre-commit-config.yaml` the rules read, in pre-commit's own shapes."""
+
+    repos: list[dict[str, object]]
+    default_stages: tuple[str, ...] | None
+
+    def hooks(self, entry: dict[str, object]) -> list[dict[str, object]]:
+        return cast("list[dict[str, object]]", entry.get("hooks", []))
+
+    def hook_ids(self) -> set[str]:
+        return {str(hook["id"]) for entry in self.repos for hook in self.hooks(entry)}
+
+    def entries_for(self, slug: str) -> list[dict[str, object]]:
+        return [
+            entry
+            for entry in self.repos
+            if isinstance(entry.get("repo"), str) and github_slug(str(entry["repo"])) == slug
+        ]
+
+
+def _valid_hook(hook: object) -> bool:
+    return (
+        isinstance(hook, dict)
+        and isinstance(hook.get("id"), str)
+        and ("stages" not in hook or _strings(hook["stages"]) is not None)
+    )
+
+
+def precommit_config(repo: Path) -> PrecommitConfig | None:
+    """`.pre-commit-config.yaml`, or None when it is missing, unparsable or not shaped as pre-commit requires."""
     config = _yaml(repo / ".pre-commit-config.yaml")
-    entries = config.get("repos") if isinstance(config, dict) else None
-    return [entry for entry in entries or [] if isinstance(entry, dict)]
-
-
-def hook_stages(
-    repo: Path, *, remote: str | None = None, published: dict[str, tuple[str, ...]] | None = None
-) -> dict[str, tuple[str, ...]]:
-    """Hook id -> stages from `.pre-commit-config.yaml`.
-
-    A hook without its own `stages` takes them from the hook repository's
-    manifest (`published`, for hooks under the `remote` repo slug), then from
-    `default_stages`.
-    """
-    config = _yaml(repo / ".pre-commit-config.yaml")
-    if not isinstance(config, dict):
-        return {}
-    default = tuple(str(stage) for stage in config.get("default_stages") or ("pre-commit",))
-    stages: dict[str, tuple[str, ...]] = {}
-    for entry in precommit_repos(repo):
-        manifest = published if remote is not None and github_slug(str(entry.get("repo", ""))) == remote else None
-        hooks = entry.get("hooks")
-        for hook in hooks if isinstance(hooks, list) else []:
-            if isinstance(hook, dict) and "id" in hook:
-                hook_id = str(hook["id"])
-                fallback = (manifest or {}).get(hook_id, default)
-                stages[hook_id] = tuple(str(stage) for stage in hook.get("stages") or fallback)
-    return stages
+    if not isinstance(config, dict) or not isinstance(repos := config.get("repos"), list):
+        return None
+    default_stages = _strings(config["default_stages"]) if "default_stages" in config else None
+    if "default_stages" in config and default_stages is None:
+        return None
+    for entry in repos:
+        hooks = entry.get("hooks", []) if isinstance(entry, dict) else None
+        if not isinstance(hooks, list) or not all(_valid_hook(hook) for hook in hooks):
+            return None
+    return PrecommitConfig(repos=repos, default_stages=default_stages)
 
 
 def _ruff_select(pyproject: Path) -> set[str] | None:
@@ -197,52 +246,60 @@ class ForgeSource:
     def text(self, relative: str) -> str | None:
         return _read(self.root / relative)
 
+    def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, text=True, check=False)
+
     def slug(self) -> str | None:
-        """forge's `owner/repo` on GitHub, from its `origin` remote."""
-        result = subprocess.run(
-            ["git", "-C", str(self.root), "config", "--get", "remote.origin.url"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        """forge's lower-cased `owner/repo` on GitHub, from its `origin` remote."""
+        result = self._git("config", "--get", "remote.origin.url")
         return github_slug(result.stdout) if result.returncode == 0 else None
 
-    def published_hooks(self) -> dict[str, tuple[str, ...]]:
-        """Hook id -> stages of the hooks forge publishes in `.pre-commit-hooks.yaml`."""
-        manifest = _yaml(self.root / ".pre-commit-hooks.yaml")
-        hooks = (
-            [hook for hook in manifest if isinstance(hook, dict) and "id" in hook] if isinstance(manifest, list) else []
-        )
-        return {str(hook["id"]): tuple(str(stage) for stage in hook.get("stages") or ("pre-commit",)) for hook in hooks}
+    def has_commit(self, revision: str) -> bool:
+        return self._git("cat-file", "-e", f"{revision}^{{commit}}").returncode == 0
+
+    def text_at(self, revision: str, relative: str) -> str | None:
+        """A file's text at a forge revision, or None when that revision lacks it."""
+        result = self._git("show", f"{revision}:{relative}")
+        return result.stdout if result.returncode == 0 else None
+
+    def published_hooks(self, revision: str) -> dict[str, tuple[str, ...]] | None:
+        """Hook id -> declared stages in `.pre-commit-hooks.yaml` at a revision, or None when it has none."""
+        text = self.text_at(revision, ".pre-commit-hooks.yaml")
+        try:
+            manifest = yaml.safe_load(text) if text is not None else None
+        except yaml.YAMLError:
+            return None
+        if not isinstance(manifest, list) or not all(_valid_hook(hook) for hook in manifest):
+            return None
+        return {str(hook["id"]): _strings(hook.get("stages", [])) or () for hook in manifest}
 
 
-def _forge_pins(project: Path, slug: str) -> list[str]:
-    return [
-        str(entry.get("rev", ""))
-        for entry in precommit_repos(project)
-        if github_slug(str(entry.get("repo", ""))) == slug
-    ]
+def _expected_stages(declared: tuple[str, ...]) -> tuple[str, ...]:
+    # forge's hooks without declared stages are commit-stage gates.
+    return declared or ("pre-commit",)
 
 
-def _forge_hook_ids(project: Path, slug: str) -> set[str]:
-    ids: set[str] = set()
-    for entry in precommit_repos(project):
-        hooks = entry.get("hooks")
-        if github_slug(str(entry.get("repo", ""))) == slug and isinstance(hooks, list):
-            ids |= {str(hook["id"]) for hook in hooks if isinstance(hook, dict) and "id" in hook}
-    return ids
+def _effective_stages(
+    hook: dict[str, object], declared: tuple[str, ...], default: tuple[str, ...] | None
+) -> tuple[str, ...]:
+    # pre-commit's resolution: the config's `stages` replaces the manifest's, even when empty;
+    # an empty result takes `default_stages`, and without those the hook runs at every stage.
+    stages = _strings(hook["stages"]) or () if "stages" in hook else declared
+    return stages or default or EVERY_STAGE
 
 
 def _workflow_pins(project: Path, slug: str) -> list[str]:
-    prefix = f"{slug}/{FORGE_WORKFLOW}@"
+    folder = project / ".github" / "workflows"
+    paths = sorted(path for path in folder.iterdir() if path.suffix in {".yml", ".yaml"}) if folder.is_dir() else []
     pins: list[str] = []
-    for path in sorted((project / ".github" / "workflows").glob("*.y*ml")):
+    for path in paths:
         workflow = _yaml(path)
         jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
         for job in jobs.values() if isinstance(jobs, dict) else []:
             uses = job.get("uses") if isinstance(job, dict) else None
-            if isinstance(uses, str) and uses.startswith(prefix):
-                pins.append(uses.removeprefix(prefix))
+            call = _REUSABLE.fullmatch(uses) if isinstance(uses, str) else None
+            if call and call.group(1).lower() == slug and call.group(2) == FORGE_WORKFLOW:
+                pins.append(call.group(3))
     return pins
 
 
@@ -253,13 +310,26 @@ def rule_links(slug: str, revision: str, travelling: Iterable[str]) -> str:
     return f"## {RULES_SECTION}\n\n{lines}"
 
 
+def _visible(markdown: str) -> str:
+    lines = _COMMENT.sub("", markdown).splitlines(keepends=True)
+    return "".join(line for line, fenced in zip(lines, _fenced(lines), strict=True) if not fenced)
+
+
 def _missing_rule_links(agents: str, slug: str, travelling: Iterable[str]) -> list[str]:
-    base = re.escape(f"https://github.com/{slug}/blob/")
+    visible = _visible(agents)
+    base = rf"https://github\.com/(?i:{re.escape(slug)})/blob/[0-9a-f]{{40}}/AGENTS\.md#"
+    # Inline links, autolinks and reference definitions; not URLs in prose, comments or code.
+    opener = r"(?:\]\(\s*<?|<|^[ ]{0,3}\[[^\]\n]+\]:[ \t]*<?)"
     return [
         name
         for name in travelling
-        if not re.search(rf"{base}[0-9a-f]{{40}}/AGENTS\.md#{re.escape(section_anchor(name))}\)", agents)
+        if not re.search(rf"{opener}{base}{re.escape(section_anchor(name))}(?=[>)\s]|$)", visible, re.MULTILINE)
     ]
+
+
+def _generated_links(section: str) -> bool:
+    body = section.splitlines()[1:]
+    return all(not line.strip() or _GENERATED_LINK.fullmatch(line.strip()) for line in body)
 
 
 def evaluate(
@@ -319,28 +389,58 @@ def evaluate(
         "" if imports else ("no CLAUDE.md" if claude is None else "CLAUDE.md does not import @AGENTS.md"),
     )
 
-    # 5. hooks reference forge at a pinned commit
-    hook_pins = _forge_pins(project, slug) if slug is not None else []
-    pins_title = "hooks reference forge at a pinned commit"
+    # 5. hooks reference forge at one pinned commit that publishes them
+    config = precommit_config(project)
+    entries = config.entries_for(slug) if config is not None and slug is not None else []
+    pin: str | None = None
+    published: dict[str, tuple[str, ...]] | None = None
+    revs = [entry.get("rev") for entry in entries]
+    floating = [str(rev) for rev in revs if not (isinstance(rev, str) and _COMMIT_SHA.fullmatch(rev))]
+    distinct = sorted({rev for rev in revs if isinstance(rev, str)})
     if slug is None:
-        add("forge-hooks", pins_title, "fail", "agent", "forge's checkout has no GitHub origin remote")
-    elif not hook_pins:
-        add("forge-hooks", pins_title, "fail", "agent", f"no https://github.com/{slug} repo in .pre-commit-config.yaml")
+        pins_detail = "forge's checkout has no GitHub origin remote"
+    elif config is None:
+        pins_detail = "no valid .pre-commit-config.yaml"
+    elif not entries:
+        pins_detail = f"no https://github.com/{slug} repo in .pre-commit-config.yaml"
+    elif floating:
+        pins_detail = f"rev {', '.join(floating)} is not a commit SHA"
+    elif len(distinct) > 1:
+        pins_detail = f"forge is pinned at several revs: {', '.join(distinct)}"
+    elif not forge.has_commit(distinct[0]):
+        pins_detail = f"forge commit {distinct[0]} is not in forge's checkout (fetch forge)"
+    elif (published := forge.published_hooks(distinct[0])) is None:
+        pins_detail = f"forge commit {distinct[0]} publishes no .pre-commit-hooks.yaml"
     else:
-        floating = [rev for rev in hook_pins if not _COMMIT_SHA.fullmatch(rev)]
-        detail = f"rev {', '.join(floating)} is not a commit SHA" if floating else ""
-        add("forge-hooks", pins_title, "fail" if floating else "pass", "agent", detail)
-
-    # 6. forge's published hooks, taken from forge, with matching stages
-    published = forge.published_hooks()
-    project_hooks = hook_stages(project, remote=slug, published=published)
-    forge_ids = _forge_hook_ids(project, slug) if slug is not None else set()
-    missing = sorted(hook for hook in published if hook not in forge_ids)
-    wrong_stage = sorted(
-        hook for hook, stages in published.items() if hook in forge_ids and project_hooks.get(hook) != stages
+        pins_detail, pin = "", distinct[0]
+    add(
+        "forge-hooks",
+        "hooks reference forge at a pinned commit",
+        "fail" if pins_detail else "pass",
+        "agent",
+        pins_detail,
     )
-    problems = [f"not referenced from forge: {', '.join(missing)}"] if missing else []
-    problems += [f"stage differs: {', '.join(wrong_stage)}"] if wrong_stage else []
+
+    # 6. every hook forge publishes at the pin, referenced from forge, at forge's stages
+    if config is None or pin is None or published is None:
+        problems = ["needs one valid forge pin (see forge-hooks)"]
+    else:
+        referenced = [hook for entry in entries for hook in config.hooks(entry)]
+        ids = {str(hook["id"]) for hook in referenced}
+        missing = sorted(set(published) - ids)
+        unknown = sorted(ids - set(published))
+        wrong_stage = sorted(
+            {
+                str(hook["id"])
+                for hook in referenced
+                if str(hook["id"]) in published
+                and _effective_stages(hook, published[str(hook["id"])], config.default_stages)
+                != _expected_stages(published[str(hook["id"])])
+            }
+        )
+        problems = [f"not referenced from forge: {', '.join(missing)}"] if missing else []
+        problems += [f"not published by forge at {pin}: {', '.join(unknown)}"] if unknown else []
+        problems += [f"stage differs: {', '.join(wrong_stage)}"] if wrong_stage else []
     add(
         "base-hooks",
         "forge's published hooks with matching stages",
@@ -348,6 +448,7 @@ def evaluate(
         "agent",
         "; ".join(problems),
     )
+    project_hooks = config.hook_ids() if config is not None else set()
 
     # 7. language hooks
     if manifest is None:
@@ -376,22 +477,29 @@ def evaluate(
     )
 
     # 9. CI calls forge's reusable workflow at the hooks' commit
-    ci_title = "CI calls forge's gates workflow at the pinned commit"
     ci_pins = _workflow_pins(project, slug) if slug is not None else []
+    ci_floating = sorted({rev for rev in ci_pins if not _COMMIT_SHA.fullmatch(rev)})
     if slug is None:
-        add("ci", ci_title, "fail", "agent", "forge's checkout has no GitHub origin remote")
+        ci_detail = "forge's checkout has no GitHub origin remote"
     elif not ci_pins:
-        add("ci", ci_title, "fail", "agent", f"no job uses {slug}/{FORGE_WORKFLOW}")
+        ci_detail = f"no job uses {slug}/{FORGE_WORKFLOW}"
+    elif ci_floating:
+        ci_detail = f"gates.yml@{', '.join(ci_floating)} is not a commit SHA"
+    elif pin is None:
+        ci_detail = "no single valid forge hook pin to compare with (see forge-hooks)"
+    elif disagreeing := sorted(set(ci_pins) - {pin}):
+        ci_detail = f"pins differ: hooks {pin}, CI {', '.join(disagreeing)}"
+    elif forge.text_at(pin, FORGE_WORKFLOW) is None:
+        ci_detail = f"forge commit {pin} has no {FORGE_WORKFLOW}"
     else:
-        floating = [rev for rev in ci_pins if not _COMMIT_SHA.fullmatch(rev)]
-        disagreeing = sorted(set(ci_pins) - set(hook_pins)) if hook_pins else []
-        if floating:
-            detail = f"gates.yml@{', '.join(floating)} is not a commit SHA"
-        elif disagreeing:
-            detail = f"pins differ: hooks {', '.join(sorted(set(hook_pins)))}, CI {', '.join(disagreeing)}"
-        else:
-            detail = ""
-        add("ci", ci_title, "fail" if detail else "pass", "agent", detail)
+        ci_detail = ""
+    add(
+        "ci",
+        "CI calls forge's gates workflow at the pinned commit",
+        "fail" if ci_detail else "pass",
+        "agent",
+        ci_detail,
+    )
 
     # 10. python strictness
     if "python" not in languages:
@@ -459,15 +567,18 @@ def evaluate(
 def apply_rule_links(agents_text: str, slug: str, revision: str, travelling: Iterable[str]) -> str:
     """Drop copies of forge's working-rule sections and link them at `revision` instead.
 
-    The links live in one generated `## Working rules` section, replaced
-    wholesale on each alignment; every other section is left alone.
+    The links live in one generated section, recognised by its heading and its
+    link-only body and replaced on each alignment. Every other section,
+    including fenced examples and a project's own section of that name, is
+    left byte for byte.
     """
     names = list(travelling)
-    result = agents_text
-    for name, text in sections(agents_text).items():
-        if name in names or name == RULES_SECTION:
-            result = result.replace(text, "")
-    return result.rstrip("\n") + "\n\n" + rule_links(slug, revision, names)
+    kept = "".join(
+        agents_text[start:end]
+        for name, start, end in _section_spans(agents_text)
+        if name not in names and not (name == RULES_SECTION and _generated_links(agents_text[start:end]))
+    ).rstrip("\n")
+    return (kept + "\n\n" if kept else "") + rule_links(slug, revision, names)
 
 
 def missing_gitignore_lines(project_ignore: str, forge_ignore: str) -> list[str]:
