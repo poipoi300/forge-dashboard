@@ -199,13 +199,12 @@ async def test_forge_commits_since_the_revision_are_listed(
 async def test_adopt_writes_a_valid_manifest_with_a_repair_loop(
     standards_env: tuple[StandardsService, ProjectsService, DiscoveryService, JobsService, AgentsService],
     make_project: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     standards, projects, discovery, jobs, agents = standards_env
     loose = make_project("Loose", manifest=None)
     await discovery.add_project(PathInput(path=str(loose)))
     project_id = next(record.id for record in projects.records() if record.path == loose.resolve())
-    monkeypatch.setenv("FAKE_HARNESS_SABOTAGE_FIRST", "1")
+    await agents.update_config(AgentsConfig(harness=fake_harness_config("--sabotage-first")))
     final = await jobs.wait((await standards.adopt(ProjectRef(project_id=project_id))).job_id)
     assert final.status is JobStatus.ATTENTION
     [run] = (await agents.branch_runs(BranchRunsInput(project_id=project_id, kind="adopt"))).runs

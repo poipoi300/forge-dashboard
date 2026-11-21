@@ -20,6 +20,21 @@ def data_paths(tmp_path: Path) -> DataPaths:
     return DataPaths(root=tmp_path / "data")
 
 
+@pytest.fixture
+def secret_env(monkeypatch: pytest.MonkeyPatch) -> tuple[str, ...]:
+    names = (
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "PRIVATE_SETTING",
+    )
+    for name in names:
+        monkeypatch.setenv(name, "test-secret")
+    return names
+
+
 def _core_runtime(paths: DataPaths) -> Runtime:
     runtime = Runtime(paths)
     jobs = JobsService(runtime)
@@ -47,11 +62,6 @@ async def started_runtime(data_paths: DataPaths) -> AsyncIterator[Runtime]:
 def _isolated_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """No test ever touches the real per-user data dir."""
     monkeypatch.setenv("FORGE_DASHBOARD_DATA_DIR", str(tmp_path / "default-data"))
-    # The fake harness resolves two-sided markers, independent of user Git defaults.
-    config_index = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
-    monkeypatch.setenv("GIT_CONFIG_COUNT", str(config_index + 1))
-    monkeypatch.setenv(f"GIT_CONFIG_KEY_{config_index}", "merge.conflictStyle")
-    monkeypatch.setenv(f"GIT_CONFIG_VALUE_{config_index}", "merge")
     yield
 
 

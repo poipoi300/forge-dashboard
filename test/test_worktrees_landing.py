@@ -66,6 +66,23 @@ async def test_commit_all_raises_with_the_hooks_output_when_the_commit_fails_twi
         await worktrees.commit_all(repo, "Blocked")
 
 
+async def test_commit_hooks_have_no_ambient_secrets_on_either_attempt(
+    tmp_path: Path, git: Git, secret_env: tuple[str, ...]
+) -> None:
+    repo = make_repo(tmp_path, git)
+    checkout = await worktrees.create(repo, tmp_path / "checkout", base="main", branch="agent")
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    checks = "".join(f'test -z "${{{name}+set}}" || exit 1\n' for name in secret_env)
+    write_hook(
+        hook,
+        '#!/bin/sh\ntest -n "$PATH" || exit 1\n' + checks + "test -f fixed && exit 0\necho fixed > fixed\nexit 1\n",
+    )
+    (checkout.path / "new.txt").write_text("x\n", encoding="utf-8")
+
+    assert await worktrees.commit_all(checkout.path, "Run hooks") is not None
+    assert git(checkout.path, "show", "HEAD:fixed") == "fixed"
+
+
 # --- removing and reconciling ---
 
 

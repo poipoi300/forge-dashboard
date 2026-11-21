@@ -19,6 +19,7 @@ from typing import Any
 
 from forge_dashboard import gitops
 from forge_dashboard.core.service import ActionError
+from forge_dashboard.process import tree
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,7 @@ DASHBOARD_IDENTITY = {"GIT_AUTHOR_NAME": "forge dashboard", "GIT_AUTHOR_EMAIL": 
 
 async def identity_env(repo: Path) -> dict[str, str]:
     """The repo's own committer identity when one is configured; otherwise the dashboard's."""
-    configured = await gitops.run(repo, "config", "user.email", check=False)
+    configured = await gitops.run(repo, "config", "user.email", env=tree.minimal_env(), check=False)
     if configured.ok and configured.stdout.strip():
         return {}
     return {
@@ -152,14 +153,15 @@ async def commit_all(path: Path, message: str) -> str | None:
     Raises:
         gitops.GitError: when the commit fails twice.
     """
-    await gitops.run(path, "add", "-A")
-    merging = await gitops.ref_exists(path, "MERGE_HEAD")
-    nothing_staged = (await gitops.run(path, "diff", "--cached", "--quiet", check=False)).exit_code == 0
+    env = tree.minimal_env()
+    await gitops.run(path, "add", "-A", env=env)
+    merging = (await gitops.run(path, "rev-parse", "--verify", "-q", "MERGE_HEAD", env=env, check=False)).ok
+    nothing_staged = (await gitops.run(path, "diff", "--cached", "--quiet", env=env, check=False)).exit_code == 0
     if nothing_staged and not merging:
         return None
-    env = await identity_env(path)
+    env.update(await identity_env(path))
     first = await gitops.run(path, "commit", "-q", "-m", message, env=env, timeout_s=1800, check=False)
     if not first.ok:
-        await gitops.run(path, "add", "-A")
+        await gitops.run(path, "add", "-A", env=env)
         await gitops.run(path, "commit", "-q", "-m", message, env=env, timeout_s=1800)
-    return (await gitops.output(path, "rev-parse", "HEAD")).strip()
+    return (await gitops.run(path, "rev-parse", "HEAD", env=env)).stdout.strip()

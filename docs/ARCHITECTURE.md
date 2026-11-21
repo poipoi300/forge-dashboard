@@ -62,6 +62,13 @@ to their section.
 - **Launch plans layer env over ours.** `LaunchPlan.env` and `PreStep.env`
   are overrides; the supervisor merges them with its own environment, since a
   Windows child without `SYSTEMROOT` cannot even open a socket.
+- **Agent harnesses, job commands, and worktree commits inherit a minimal environment.**
+  The allowlist covers executable lookup, user and tool directories, temporary
+  files, and locale. Jobs can supply explicit settings such as manifest check
+  variables. Git network jobs can also use the user's SSH agent. Agent harness
+  authentication uses the harness's own configuration. This limits inherited
+  environment variables only. Delegation briefs quote GitHub issue text as
+  untrusted input.
 - **A start is active immediately.** `Supervisor.start` moves the service to
   `starting` before its task first runs, so a dependent waiting for readiness
   never mistakes a just-started provider for a stopped one.

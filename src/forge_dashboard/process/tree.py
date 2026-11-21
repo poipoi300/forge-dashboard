@@ -38,6 +38,29 @@ DEFAULT_GRACE_S = 8.0
 # Win32 CREATE_SUSPENDED; the subprocess module does not export it.
 _CREATE_SUSPENDED = 0x00000004
 
+# Exact names for command lookup, user config and caches, temporary files, and locale.
+_RUNTIME_ENV = (
+    "PATH",
+    "PATHEXT",
+    "HOME",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "PRE_COMMIT_HOME",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+)
+
 StageReporter = Callable[[str], None]
 
 
@@ -65,6 +88,12 @@ def resolve_executable(executable: str, env: Mapping[str, str] | None = None) ->
 def child_env(overrides: Mapping[str, str] | None = None) -> dict[str, str]:
     """The environment for a child: ours, unbuffered Python output, then overrides."""
     return {**os.environ, "PYTHONUNBUFFERED": "1", **(overrides or {})}
+
+
+def minimal_env(overrides: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Allowlist inherited runtime settings and add values explicitly supplied by the caller."""
+    inherited = {name: os.environ[name] for name in _RUNTIME_ENV if name in os.environ}
+    return {**inherited, "PYTHONUNBUFFERED": "1", **(overrides or {})}
 
 
 @dataclass

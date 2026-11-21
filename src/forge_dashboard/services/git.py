@@ -517,7 +517,7 @@ class GitService(Service[GitConfig, GitState], ProjectListener):
             result = await context.run(
                 ["git", "-C", str(record.path), *gitops.CONFIG, *argv],
                 record.path,
-                gitops.NON_INTERACTIVE,
+                gitops.transport_env(),
                 timeout_s=600,
             )
             await self.refresh(record)

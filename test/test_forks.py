@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -90,6 +91,8 @@ def build_fork(
     git(checkout, "remote", "add", "upstream", str(upstream_bare))
     git(checkout, "config", "user.email", "me@example.com")
     git(checkout, "config", "user.name", "Me")
+    # The fake harness resolves two-sided conflict markers.
+    git(checkout, "config", "merge.conflictStyle", "merge")
 
     same_change = "line one\nline two\nline three\nsame tail\n"
     fork_text = same_change if identical else "line one\nfork's line two\nline three\n"
@@ -212,18 +215,17 @@ async def test_conflicts_are_resolved_by_the_harness_and_recorded_in_the_commit(
 
 
 async def test_failed_verification_retries_with_the_failure_appended(
-    forks_env: tuple[ForksService, ProjectsService, DiscoveryService, JobsService, SchedulerService],
+    data_paths: DataPaths,
     tmp_path: Path,
     git: Git,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    forks, _projects, discovery, jobs, _scheduler = forks_env
     repos = build_fork(tmp_path, git, conflict=True)
-    await discovery.add_project(PathInput(path=str(repos.checkout)))
-    monkeypatch.setenv("FAKE_HARNESS_SABOTAGE_FIRST", "1")
-    status, _summary = await _sync(forks, jobs)
-    assert status is JobStatus.SUCCEEDED
-    [run] = (await forks.history(HistoryInput(project_id="forked"))).runs
+    async with _forks_runtime(data_paths, tmp_path, fake_harness_config("--sabotage-first")) as env:
+        forks, _projects, discovery, jobs, _scheduler = env
+        await discovery.add_project(PathInput(path=str(repos.checkout)))
+        status, _summary = await _sync(forks, jobs)
+        assert status is JobStatus.SUCCEEDED
+        [run] = (await forks.history(HistoryInput(project_id="forked"))).runs
     assert run.agent_attempts == 2
 
 
@@ -302,13 +304,49 @@ async def test_failing_checks_park_the_run_and_keep_the_branch(
     assert not (repos.checkout / "upstream-only.txt").exists()
 
 
-async def test_rebase_strategy_replays_the_fork_and_leaves_a_note(
-    forks_env: tuple[ForksService, ProjectsService, DiscoveryService, JobsService, SchedulerService],
-    tmp_path: Path,
-    git: Git,
+@pytest.mark.parametrize("manual", [False, True], ids=["agent", "manual"])
+async def test_staging_a_conflict_resolution_keeps_secrets_out_of_index_hooks(
+    forks_env: ForksEnv, tmp_path: Path, git: Git, secret_env: tuple[str, ...], manual: bool
 ) -> None:
     forks, _projects, discovery, jobs, _scheduler = forks_env
     repos = build_fork(tmp_path, git, conflict=True)
+    output = tmp_path / "index-hook.log"
+    write_hook(
+        repos.checkout / ".git" / "hooks" / "post-index-change",
+        "#!/bin/sh\n"
+        'test "$1" = 0 && test -f .git && test -z "$(git ls-files -u -- shared.txt)" || exit 0\n'
+        f'printf "%s\\n" "env${{{secret_env[0]}+ inherited a secret}}" >> {shlex.quote(output.as_posix())}\n',
+    )
+    await discovery.add_project(PathInput(path=str(repos.checkout)))
+    if manual:
+        await forks.set_policy(PolicyInput(project_id="forked", policy=ForkPolicy(conflicts="stop")))
+        status, _ = await _sync(forks, jobs)
+        assert status is JobStatus.ATTENTION
+        [run] = (await forks.history(HistoryInput(project_id="forked"))).runs
+        assert run.worktree is not None
+        (Path(run.worktree) / "shared.txt").write_text("resolved\n", encoding="utf-8")
+        status = (await jobs.wait((await forks.apply(RunInput(run_id=run.id))).job_id)).status
+    else:
+        status, _ = await _sync(forks, jobs)
+
+    assert status is JobStatus.SUCCEEDED
+    assert set(output.read_text(encoding="utf-8").splitlines()) == {"env"}
+
+
+async def test_rebase_replays_the_fork_and_uses_the_configured_identity_for_its_note(
+    forks_env: tuple[ForksService, ProjectsService, DiscoveryService, JobsService, SchedulerService],
+    tmp_path: Path,
+    git: Git,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forks, _projects, discovery, jobs, _scheduler = forks_env
+    repos = build_fork(tmp_path, git, conflict=True)
+    home = tmp_path / "git-home"
+    xdg = home / "config"
+    write_files(xdg, {"git/config": "[user]\n\tname = Sync User\n\temail = sync@example.com\n"})
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    git(repos.checkout, "config", "--local", "--remove-section", "user")
     await discovery.add_project(PathInput(path=str(repos.checkout)))
     await forks.set_policy(PolicyInput(project_id="forked", policy=ForkPolicy(strategy="rebase")))
     git(repos.checkout, "switch", "-q", "-c", "elsewhere")  # a rewrite only lands on a branch nobody has checked out
@@ -318,6 +356,7 @@ async def test_rebase_strategy_replays_the_fork_and_leaves_a_note(
     assert git(repos.checkout, "rev-parse", "main~1") == upstream_sha, "fork commits are replayed on upstream"
     note = git(repos.checkout, "notes", "--ref=forge-sync", "show", "main")
     assert f"Forge-Sync-Upstream: {upstream_sha}" in note
+    assert git(repos.checkout, "log", "-1", "--format=%ae", "refs/notes/forge-sync") == "sync@example.com"
 
 
 async def test_a_rebase_never_resets_a_checked_out_branch_and_applies_once_it_is_free(

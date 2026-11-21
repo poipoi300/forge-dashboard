@@ -206,7 +206,7 @@ class JobContext:
         """Run a command, streaming merged output into the job log."""
         if echo:
             self.log(f"$ {' '.join(argv)}")
-        result = await tree.stream(argv, cwd, tree.child_env(env), self.log, timeout_s=timeout_s, stdin=stdin)
+        result = await tree.stream(argv, cwd, tree.minimal_env(env), self.log, timeout_s=timeout_s, stdin=stdin)
         if result.timed_out:
             self.log(f"timed out after {timeout_s:.0f}s")
         return result

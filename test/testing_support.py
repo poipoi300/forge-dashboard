@@ -11,9 +11,9 @@ from forge_dashboard.domain.harness import HarnessConfig
 FAKE_HARNESS = Path(__file__).parent / "fixtures" / "fake_harness.py"
 
 
-def fake_harness_config() -> HarnessConfig:
+def fake_harness_config(*args: str) -> HarnessConfig:
     """The harness pointed at the deterministic fake agent."""
-    return HarnessConfig(command=[sys.executable, str(FAKE_HARNESS)])
+    return HarnessConfig(command=[sys.executable, str(FAKE_HARNESS), *args])
 
 
 async def wait_for(condition: Callable[[], bool], timeout_s: float = 15.0, interval_s: float = 0.05) -> None:
