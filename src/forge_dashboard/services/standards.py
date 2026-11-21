@@ -130,6 +130,11 @@ def standards_brief(
 ) -> str:
     """The prompt for the judgment part of a bring-up."""
     pin = revision or "<forge's HEAD commit>"
+
+    def read(name: str) -> str | None:
+        # The brief's forge files come from the commit it tells the agent to pin.
+        return forge.text_at(revision, name) if revision else forge.text(name)
+
     hooks = "\n".join(f"- {language}: {', '.join(ids)}" for language, ids in rules.LANGUAGE_HOOKS.items())
     failing_text = "\n".join(
         f"- {check.id}: {check.title}. {check.detail}" + (f"\n```diff\n{check.diff}\n```" if check.diff else "")
@@ -174,8 +179,7 @@ def standards_brief(
         ("FORGE_GITIGNORE", ".gitignore"),
     ]
     forge_text = "\n\n".join(
-        f"## forge's {name}\n<<<{marker}\n{(forge.text(name) or '').rstrip()}\n{marker}>>>"
-        for marker, name in forge_parts
+        f"## forge's {name}\n<<<{marker}\n{(read(name) or '').rstrip()}\n{marker}>>>" for marker, name in forge_parts
     )
     return (
         "\n\n".join(
@@ -381,8 +385,12 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
         slug = forge.slug()
         if agents.is_file() and slug is not None and revision is not None:
             text = agents.read_text(encoding="utf-8")
-            forge_sections = forge.rule_sections_at(revision) or {}
-            linked = rules.apply_rule_links(text, slug, revision, self.config.travelling_sections, forge_sections)
+            manifest_now = load_manifest(worktree).manifest
+            recorded = manifest_now.forge.template_revision if manifest_now and manifest_now.forge else None
+            versions = [forge.rule_sections_at(rev) for rev in (revision, recorded) if rev is not None]
+            linked = rules.apply_rule_links(
+                text, slug, revision, self.config.travelling_sections, [version for version in versions if version]
+            )
             if linked != text:
                 agents.write_text(linked, encoding="utf-8", newline="\n")
                 changed.append("AGENTS.md (links to forge's working rules)")

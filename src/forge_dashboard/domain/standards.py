@@ -48,7 +48,7 @@ _GITHUB_REMOTE = re.compile(
 )
 _SECTION = re.compile(r"## (.+?)\s*$")
 _FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
-_INLINE_CODE = re.compile(r"`[^`\n]*`")
+_INLINE_CODE = re.compile(r"(`+)(?!`).*?(?<!`)\1(?!`)", re.DOTALL)
 # pre-commit still accepts the old stage names and normalizes them.
 _LEGACY_STAGES = {"commit": "pre-commit", "push": "pre-push", "merge-commit": "pre-merge-commit"}
 _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -99,7 +99,7 @@ def _fenced(lines: Iterable[str]) -> list[bool]:
         flags.append(fence is not None)
         # CommonMark: a fence closes on the same character, at least as long, with nothing after it.
         if fence and marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence):
-            fence = None if not marker.group(2).strip() else fence
+            fence = None if not marker.group(2).strip(" \t") else fence
     return flags
 
 
@@ -126,7 +126,7 @@ def sections(markdown: str) -> dict[str, str]:
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, UnicodeDecodeError):
+    except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError):
         return None
 
 
@@ -277,28 +277,35 @@ class ForgeSource:
 
     def reusable_workflow_at(self, revision: str) -> bool:
         """Whether the revision has forge's gates workflow as a file that declares `workflow_call`."""
-        if self.object_type(f"{revision}:{FORGE_WORKFLOW}") != "blob":
-            return False
+        text = self.text_at(revision, FORGE_WORKFLOW)
         try:
-            workflow = yaml.safe_load(self.text_at(revision, FORGE_WORKFLOW) or "")
+            # BaseLoader keeps keys literal; YAML 1.1 would read `on` (and `yes`) as True.
+            workflow = yaml.load(text, Loader=yaml.BaseLoader) if text is not None else None
         except yaml.YAMLError:
             return False
-        # YAML 1.1 reads the bare key `on` as True.
-        triggers = workflow.get("on", workflow.get(True)) if isinstance(workflow, dict) else None
+        triggers = workflow.get("on") if isinstance(workflow, dict) else None
         if isinstance(triggers, str):
             return triggers == "workflow_call"
         return isinstance(triggers, (list, dict)) and "workflow_call" in triggers
 
     def rule_sections_at(self, revision: str) -> dict[str, str] | None:
-        """forge's AGENTS.md sections at a commit, or None when the SHA is no forge commit."""
+        """forge's AGENTS.md sections at a commit, or None when it is no forge commit with an AGENTS.md file."""
         if not self.is_commit(revision):
             return None
-        return sections(self.text_at(revision, "AGENTS.md") or "")
+        text = self.text_at(revision, "AGENTS.md")
+        return sections(text) if text is not None else None
 
     def text_at(self, revision: str, relative: str) -> str | None:
-        """A file's text at a forge revision, or None when that revision lacks it."""
-        result = self._git("show", f"{revision}:{relative}")
-        return result.stdout if result.returncode == 0 else None
+        """A UTF-8 file's text at a forge revision, or None when that revision has no such file."""
+        if self.object_type(f"{revision}:{relative}") != "blob":
+            return None
+        result = subprocess.run(
+            ["git", "-C", str(self.root), "show", f"{revision}:{relative}"], capture_output=True, check=False
+        )
+        try:
+            return result.stdout.decode("utf-8") if result.returncode == 0 else None
+        except UnicodeDecodeError:
+            return None
 
     def published_hooks(self, revision: str) -> dict[str, tuple[str, ...]] | None:
         """Hook id -> declared stages in `.pre-commit-hooks.yaml` at a revision, or None when it has none."""
@@ -371,7 +378,7 @@ def _linked_revisions(agents: str, slug: str, name: str) -> list[str]:
         label = re.escape(definition.group(1))
         # A reference definition renders nothing unless a link uses its label.
         if re.search(
-            rf"\]\[(?i:{label})\]|\[(?i:{label})\](?![:(\[])",
+            rf"(?<!!)\[[^\]\n]*\]\[(?i:{label})\]|(?<![!\]])\[(?i:{label})\](?![:(\[])",
             visible[: definition.start()] + visible[definition.end() :],
         ):
             revisions.append(definition.group(2))
@@ -385,7 +392,8 @@ def _missing_rule_links(agents: str, slug: str, travelling: Iterable[str], forge
     for name in travelling:
         revisions = _linked_revisions(agents, slug, name)
         for revision in revisions:
-            known.setdefault(revision, forge.rule_sections_at(revision))
+            if revision not in known:
+                known[revision] = forge.rule_sections_at(revision)
         if not any(name in (known[revision] or {}) for revision in revisions):
             missing.append(name)
     return missing
@@ -426,7 +434,8 @@ def evaluate(
     # 2-3. AGENTS.md, linking forge's working-rule sections
     agents = _read(project / "AGENTS.md")
     slug = forge.slug()
-    rule_names = [name for name in travelling_sections if name in sections(forge.text("AGENTS.md") or "")]
+    theirs = sections(forge.text("AGENTS.md") or "")
+    rule_names = [name for name in travelling_sections if name in theirs]
     add(
         "agents-md",
         "AGENTS.md present",
@@ -440,7 +449,7 @@ def evaluate(
     elif slug is None:
         add("agents-sections", links_title, "fail", "deterministic", "forge's checkout has no GitHub origin remote")
     else:
-        ours, theirs = sections(agents), sections(forge.text("AGENTS.md") or "")
+        ours = sections(agents)
         copied = [name for name in rule_names if name in ours and _same_text(ours[name], theirs[name])]
         own = [name for name in rule_names if name in ours and name not in copied]
         unlinked = _missing_rule_links(agents, slug, rule_names, forge)
@@ -636,21 +645,23 @@ def evaluate(
 
 
 def apply_rule_links(
-    agents_text: str, slug: str, revision: str, travelling: Iterable[str], forge_sections: dict[str, str]
+    agents_text: str, slug: str, revision: str, travelling: Iterable[str], forge_versions: Iterable[dict[str, str]]
 ) -> str:
     """Drop copies of forge's working-rule sections and link them at `revision` instead.
 
-    A section is a copy when its text matches forge's (`forge_sections`, ignoring
-    whitespace); a project's own section under one of those headings stays for a
+    A section is a copy when its text matches forge's at one of `forge_versions`
+    (the revision being aligned to, and the one the project last aligned to),
+    ignoring whitespace; a project's own section under one of those headings stays for a
     person to resolve. The links live in one generated section, recognised by its
     heading and its link-only body and replaced on each alignment. Everything else
     is left byte for byte.
     """
     names = list(travelling)
+    versions = list(forge_versions)
 
     def dropped(name: str | None, text: str) -> bool:
         if name in names:
-            return name in forge_sections and _same_text(text, forge_sections[name])
+            return any(name in version and _same_text(text, version[name]) for version in versions)
         return name == RULES_SECTION and _generated_links(text)
 
     kept = "".join(

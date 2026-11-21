@@ -351,7 +351,7 @@ def test_rule_links_leave_fenced_examples_and_a_project_section_of_that_name(for
     own = "## Working rules from forge\n\nOur own notes.\n"
     example = f"## Examples\n\n```md\n{verifying}```\n"
     text = f"# Mine\n\n{example}\n{own}\n{verifying.rstrip()}"
-    linked = rules.apply_rule_links(text, "owner/forge", "a" * 40, TRAVELLING, forge_sections)
+    linked = rules.apply_rule_links(text, "owner/forge", "a" * 40, TRAVELLING, [forge_sections])
     assert example in linked and own in linked
     assert linked.count("A task is done when the gates pass.") == 1, "the copy at EOF without a newline is gone"
     assert linked.endswith(_links("a" * 40))
@@ -360,7 +360,7 @@ def test_rule_links_leave_fenced_examples_and_a_project_section_of_that_name(for
 def test_a_longer_fence_holds_shorter_fence_lines_and_headings(forge_repo: Path) -> None:
     forge_sections = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
     example = "## Examples\n\n````md\n```\n## Verifying\n\nOurs.\n```\n````\n"
-    linked = rules.apply_rule_links(f"# Mine\n\n{example}", "owner/forge", "a" * 40, TRAVELLING, forge_sections)
+    linked = rules.apply_rule_links(f"# Mine\n\n{example}", "owner/forge", "a" * 40, TRAVELLING, [forge_sections])
     assert linked.startswith(f"# Mine\n\n{example}")
 
 
@@ -369,7 +369,7 @@ def test_a_projects_own_section_under_a_rule_heading_is_kept_and_reported(
 ) -> None:
     forge_sections = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
     own = "## Verifying\n\nRun the oracle captures on Windows too.\n"
-    linked = rules.apply_rule_links(f"# Mine\n\n{own}", "owner/forge", "a" * 40, TRAVELLING, forge_sections)
+    linked = rules.apply_rule_links(f"# Mine\n\n{own}", "owner/forge", "a" * 40, TRAVELLING, [forge_sections])
     assert own in linked
     head = git(forge_repo, "rev-parse", "HEAD")
     project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
@@ -459,16 +459,77 @@ def test_a_directory_named_like_a_workflow_is_skipped(forge_repo: Path, tmp_path
     assert _evaluate(project, forge_repo) == {}
 
 
+def test_a_fence_closer_followed_by_a_non_breaking_space_does_not_close(forge_repo: Path) -> None:
+    forge_sections = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
+    example = "## Examples\n\n```\n```\u00a0\n## Verifying\n\n- A task is done when the gates pass.\n```\n"
+    linked = rules.apply_rule_links(f"# Mine\n\n{example}", "owner/forge", "a" * 40, TRAVELLING, [forge_sections])
+    assert linked.startswith(f"# Mine\n\n{example}")
+
+
+def test_a_copy_from_the_recorded_forge_revision_is_also_removed(forge_repo: Path) -> None:
+    old = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
+    new = {**old, "Taste": "## Taste\n\n- Smaller diffs.\n"}
+    linked = rules.apply_rule_links(f"# Mine\n\n{old['Taste']}", "owner/forge", "a" * 40, TRAVELLING, [new, old])
+    assert "Guard clauses first." not in linked
+
+
+def test_links_need_a_forge_agents_md_file_at_the_commit(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    git(forge_repo, "rm", "-q", "AGENTS.md")
+    (forge_repo / "AGENTS.md").mkdir()
+    for name in TRAVELLING:
+        (forge_repo / "AGENTS.md" / f"## {name}").write_text("x\n", encoding="utf-8")
+    odd = git.commit_all(forge_repo, "AGENTS.md as a directory")
+    git(forge_repo, "rm", "-rq", "AGENTS.md")
+    git(forge_repo, "checkout", "HEAD~1", "--", "AGENTS.md")
+    head = git.commit_all(forge_repo, "Restore AGENTS.md")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head, links_rev=odd)
+    assert "agents-sections" in _evaluate(project, forge_repo)
+
+
+def test_a_workflow_needs_workflow_call_under_a_literal_on_key(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    (forge_repo / ".github" / "workflows" / "gates.yml").write_text(
+        "yes:\n  workflow_call:\njobs: {}\n", encoding="utf-8"
+    )
+    revision = git.commit_all(forge_repo, "Not a reusable workflow")
+    project = _referencing_project(tmp_path, git, hooks_rev=revision, ci_rev=revision)
+    assert (
+        _evaluate(project, forge_repo)["ci"] == f"forge commit {revision} has no reusable .github/workflows/gates.yml"
+    )
+
+
+def test_a_link_to_a_commit_with_undecodable_agents_md_is_invalid(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    good = git(forge_repo, "rev-parse", "HEAD")
+    (forge_repo / "AGENTS.md").write_bytes(b"## Verifying\n\xff\xfe\n")
+    bad = git.commit_all(forge_repo, "Latin-1 bytes")
+    git(forge_repo, "checkout", good, "--", "AGENTS.md")
+    project = _referencing_project(tmp_path, git, hooks_rev=good, ci_rev=good, links_rev=bad)
+    assert "agents-sections" in _evaluate(project, forge_repo)
+
+
+@pytest.mark.parametrize("form", ["- ``[{name}]({url})``", "![ref-{n}]\n\n[ref-{n}]: {url}"])
+def test_double_backtick_code_and_image_references_are_not_links(
+    forge_repo: Path, tmp_path: Path, git: Git, form: str
+) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    lines = [
+        form.format(name=name, n=n, url=f"{FORGE_URL}/blob/{head}/AGENTS.md#{rules.section_anchor(name)}")
+        for n, name in enumerate(TRAVELLING)
+    ]
+    (project / "AGENTS.md").write_text("# Referencing\n\n## Rules\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    assert "agents-sections" in _evaluate(project, forge_repo)
+
+
 def test_rule_links_replace_copied_sections_and_follow_the_revision(forge_repo: Path) -> None:
     forge_agents = (forge_repo / "AGENTS.md").read_text(encoding="utf-8")
     copied = (
         "# Mine\n\n## Intro\n\nHi.\n\n" + rules.sections(forge_agents)["Verifying"] + "\n## Project notes\n\nOurs.\n"
     )
     forge_sections = rules.sections(forge_agents)
-    linked = rules.apply_rule_links(copied, "owner/forge", "a" * 40, TRAVELLING, forge_sections)
+    linked = rules.apply_rule_links(copied, "owner/forge", "a" * 40, TRAVELLING, [forge_sections])
     assert "Hi." in linked and "Ours." in linked and "A task is done when the gates pass." not in linked
     assert linked.endswith(_links("a" * 40))
-    moved = rules.apply_rule_links(linked, "owner/forge", "b" * 40, TRAVELLING, forge_sections)
+    moved = rules.apply_rule_links(linked, "owner/forge", "b" * 40, TRAVELLING, [forge_sections])
     assert moved.endswith(_links("b" * 40)) and moved.count("## Working rules") == 1 and "Ours." in moved
 
 
@@ -482,7 +543,8 @@ def test_template_revision_is_written_without_touching_the_rest() -> None:
     assert tomllib.loads(again)["forge"]["template_revision"] == "def456" and again.count("[forge]") == 1
 
 
-def test_the_brief_carries_failing_checks_rules_and_forge_text(forge_repo: Path, tmp_path: Path) -> None:
+def test_the_brief_carries_failing_checks_rules_and_forge_text(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
     report = rules.evaluate(tmp_path, ForgeSource(forge_repo), travelling_sections=TRAVELLING, forge_head="abc")
     brief = standards_brief(
         project_name="Demo",
@@ -491,12 +553,12 @@ def test_the_brief_carries_failing_checks_rules_and_forge_text(forge_repo: Path,
         forge=ForgeSource(forge_repo),
         travelling=TRAVELLING,
         slug="owner/forge",
-        revision="abc",
+        revision=head,
     )
     assert brief.startswith("# Bring up to standards")
     assert "<<<FORGE_AGENTS_MD" in brief and "Guard clauses first." in brief
-    assert 'template_revision = "abc"' in brief and "- forge-hooks:" in brief
-    assert "owner/forge/.github/workflows/gates.yml@abc" in brief and "<<<FORGE_HOOKS" in brief
+    assert f'template_revision = "{head}"' in brief and "- forge-hooks:" in brief
+    assert f"owner/forge/.github/workflows/gates.yml@{head}" in brief and "<<<FORGE_HOOKS" in brief
 
 
 NONCOMPLIANT = {
