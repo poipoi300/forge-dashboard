@@ -535,6 +535,47 @@ def test_rule_checks_fail_when_forges_own_agents_md_cannot_be_read(forge_repo: P
     assert _evaluate(project, forge_repo)["agents-sections"] == "forge's AGENTS.md cannot be read"
 
 
+@pytest.mark.parametrize("which", ["forge", "project"])
+def test_an_unreadable_agents_md_is_reported_not_raised(forge_repo: Path, tmp_path: Path, git: Git, which: str) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    path = (forge_repo if which == "forge" else project) / "AGENTS.md"
+    path.chmod(0)
+    try:
+        failing = _evaluate(project, forge_repo)
+    finally:
+        path.chmod(0o644)
+    expected = "forge's AGENTS.md cannot be read" if which == "forge" else "no AGENTS.md"
+    assert failing["agents-sections"] == expected
+
+
+def test_only_commonmark_line_endings_and_top_level_headings_split_sections(forge_repo: Path) -> None:
+    forge_sections = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
+    link = f"- [Taste]({FORGE_URL}/blob/{'a' * 40}/AGENTS.md#taste)"
+    own = (
+        "# Mine\n\nOne rule\u2028on two visual lines.\n\n"
+        f"> ## {rules.RULES_SECTION}\n\n{link}\n\n## Own\n\nKeep me.\n\n"
+    )
+    linked = rules.apply_rule_links(
+        own + forge_sections["Verifying"], "owner/forge", "b" * 40, TRAVELLING, forge_sections
+    )
+    assert linked.startswith(own) and forge_sections["Verifying"] not in linked
+    assert rules.sections(own + forge_sections["Verifying"]).keys() == {"Own", "Verifying"}
+
+
+def test_a_generated_link_to_an_accented_section_is_accepted(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    agents = forge_repo / "AGENTS.md"
+    agents.write_text(agents.read_text(encoding="utf-8") + "\n## Vérification\n\nCheck it.\n", encoding="utf-8")
+    head = git.commit_all(forge_repo, "Add an accented section")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    travelling = [*TRAVELLING, "Vérification"]
+    (project / "AGENTS.md").write_text(
+        f"# Referencing\n\n{rules.rule_links('owner/forge', head, travelling)}", encoding="utf-8"
+    )
+    report = rules.evaluate(project, ForgeSource(forge_repo), travelling_sections=travelling, forge_head=head)
+    assert next(check for check in report.checks if check.id == "agents-sections").result == "pass"
+
+
 @pytest.mark.parametrize(
     ("text", "counted"),
     [
@@ -739,6 +780,18 @@ async def test_forge_commits_since_the_revision_are_listed(
     assert standing.behind == 1 and [c.subject for c in standing.forge_commits_since] == ["Tighten a gate"]
     report = await standards.report(ProjectRef(project_id="aligned"))
     assert report.report is not None and report.report.forge_head == git(forge_repo, "rev-parse", "HEAD")
+
+
+async def test_evaluation_ignores_an_unusable_recorded_revision(
+    standards_env: tuple[StandardsService, ProjectsService, DiscoveryService, JobsService, AgentsService],
+    make_project: Callable[..., Path],
+) -> None:
+    standards, _projects, discovery, _jobs, _agents = standards_env
+    manifest = MANIFEST.replace("{name}", "Odd").replace("{project_id}", "odd")
+    odd = make_project("Odd", manifest=manifest + '\n[forge]\ntemplate_revision = "a\\u0000b"\n')
+    await discovery.add_project(PathInput(path=str(odd)))
+    standing = await standards.evaluate(ProjectRef(project_id="odd"))
+    assert standing.behind is None and standing.forge_commits_since == []
 
 
 async def test_adopt_writes_a_valid_manifest_with_a_repair_loop(

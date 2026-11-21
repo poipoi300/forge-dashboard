@@ -341,7 +341,9 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
         return standing
 
     async def _commits_since(self, forge: ForgeSource, revision: str | None) -> tuple[list[ForgeCommit], int | None]:
-        if revision is None or not await gitops.ref_exists(forge.root, f"{revision}^{{commit}}"):
+        if revision is None or not rules.is_revision(revision):
+            return [], None
+        if not await gitops.ref_exists(forge.root, f"{revision}^{{commit}}"):
             return [], None
         found = await gitops.log(forge.root, f"{revision}..HEAD", limit=100, stats=False)
         return [ForgeCommit(short_sha=c.short_sha, subject=c.subject, committed_at=c.committed_at) for c in found], len(

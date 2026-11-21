@@ -47,8 +47,8 @@ _GENERATED_LINK = re.compile(r"- \[[^\]]+\]\(https://github\.com/[^/\s]+/[^/\s]+
 _GITHUB_REMOTE = re.compile(
     r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+/[^/]+?)(?:\.git)?/?"
 )
-_SECTION = re.compile(r"## (.+?)\s*$")
 _MARKDOWN = MarkdownIt("commonmark")
+_LINE_END = re.compile(r"\r\n|\r|\n")
 _LEGACY_REVISION = re.compile(r"[0-9a-f]{7,40}")
 # pre-commit still accepts the old stage names and normalizes them.
 _LEGACY_STAGES = {"commit": "pre-commit", "push": "pre-push", "merge-commit": "pre-merge-commit"}
@@ -89,16 +89,16 @@ class ComplianceReport(BaseModel):
 def _section_spans(markdown: str) -> list[tuple[str | None, int, int]]:
     """`(heading, start, end)` of each level-2 section as CommonMark parses it; other spans have heading None.
 
-    A section runs from its `##` (or setext) heading to the next level-1 or
-    level-2 heading; headings inside code blocks are not headings.
+    A section runs from its top-level `##` (or setext) heading to the next
+    top-level level-1 or level-2 heading; headings inside code blocks, block
+    quotes or lists do not split the document.
     """
-    starts = [0]
-    for line in markdown.splitlines(keepends=True):
-        starts.append(starts[-1] + len(line))
+    # CommonMark's lines end at CR, LF or CRLF only (not at U+2028 and the like).
+    starts = [0, *(match.end() for match in _LINE_END.finditer(markdown))]
     tokens = _MARKDOWN.parse(markdown)
     boundaries: list[tuple[str | None, int]] = [(None, 0)]
     for index, token in enumerate(tokens):
-        if token.type == "heading_open" and token.tag in {"h1", "h2"} and token.map is not None:
+        if token.type == "heading_open" and token.level == 0 and token.tag in {"h1", "h2"} and token.map is not None:
             name = tokens[index + 1].content.strip() if token.tag == "h2" else None
             boundaries.append((name, starts[token.map[0]]))
     ends = [start for _, start in boundaries[1:]] + [len(markdown)]
@@ -115,7 +115,7 @@ def sections(markdown: str) -> dict[str, str]:
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError):
         return None
 
 
@@ -369,8 +369,10 @@ def _link_targets(markdown: str) -> list[str]:
 
 def _linked_revisions(agents: str, slug: str, name: str) -> list[str]:
     """The forge SHAs at which AGENTS.md links section `name` as a rendered link."""
+    # CommonMark percent-encodes link destinations, so compare in that form.
+    fragment = _MARKDOWN.normalizeLink(f"#{section_anchor(name)}")
     pattern = re.compile(
-        rf"https://github\.com/(?i:{re.escape(slug)})/blob/([0-9a-f]{{40}})/AGENTS\.md#{re.escape(section_anchor(name))}"
+        rf"https://github\.com/(?i:{re.escape(slug)})/blob/([0-9a-f]{{40}})/AGENTS\.md{re.escape(fragment)}"
     )
     return [match.group(1) for target in _link_targets(agents) if (match := pattern.fullmatch(target))]
 
