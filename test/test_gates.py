@@ -1,8 +1,11 @@
 """The gate registry must stay in sync with the actual hook/CI configs."""
 
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from forge_dashboard.gates import DETERMINISTIC_GATES, GateStage, gates_for_stage
@@ -31,6 +34,32 @@ def test_every_hook_is_a_local_system_hook() -> None:
 
 def test_push_stage_holds_only_slow_gates() -> None:
     assert {g.name for g in gates_for_stage(GateStage.PUSH)} == {"tests-and-diff-coverage"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="exercises the Bash gate with a POSIX uv stub")
+def test_push_gate_runs_python_tests_without_git_hook_context(tmp_path: Path) -> None:
+    uv = tmp_path / "uv"
+    uv.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "${GIT_DIR-unset}" "${GIT_INDEX_FILE-unset}" "$@"\nexit 79\n',
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "tools" / "stack_coverage_gate.sh")],
+        cwd=REPO_ROOT,
+        env=os.environ
+        | {
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "GIT_DIR": str(tmp_path / "hook-git-dir"),
+            "GIT_INDEX_FILE": str(tmp_path / "hook-index"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 79, result.stderr
+    assert result.stdout.splitlines() == ["unset", "unset", "run", "coverage", "run", "-m", "pytest"]
 
 
 def test_ci_enforced_gates_appear_in_workflow() -> None:

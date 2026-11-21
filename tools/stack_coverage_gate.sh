@@ -14,7 +14,14 @@ WEB_REPORT="web/coverage/lcov.info"
 
 # Live tests run only when explicitly enabled (they spend tokens or reach the
 # network), so no marker filtering is needed here.
-uv run coverage run -m pytest
+(
+  # Git fixtures operate on their own repositories, outside the hook context.
+  git_local_env=$(git rev-parse --local-env-vars)
+  while IFS= read -r name; do
+    unset "$name"
+  done <<< "$git_local_env"
+  uv run coverage run -m pytest
+)
 uv run coverage lcov -o "${PYTHON_REPORT}"
 
 rm -rf web/coverage
