@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from urllib.parse import urlsplit
+
+from forge_dashboard.process import tree
 
 # `ssh.github.com:443` is GitHub's documented SSH-over-HTTPS endpoint.
 _HOSTS = frozenset({"github.com", "ssh.github.com"})
 _URL_SCHEMES = frozenset({"https", "http", "ssh", "git"})
 _SCP_LIKE = re.compile(r"^(?:[^@/\s]+@)?(?P<host>[^:/\s]+):(?P<path>\S+)$")
-_OWNER_AND_NAME = re.compile(r"^(?P<owner>[A-Za-z0-9][A-Za-z0-9-]*)/(?P<name>[A-Za-z0-9._-]+)$")
+_OWNER = r"[A-Za-z0-9][A-Za-z0-9-]*"
+GITHUB_OWNER_PATTERN = rf"^{_OWNER}$"
+GITHUB_SLUG_PATTERN = rf"^{_OWNER}/[A-Za-z0-9._-]+$"
+_OWNER_AND_NAME = re.compile(GITHUB_SLUG_PATTERN)
 
 
 def parse_github_slug(remote_url: str) -> str | None:
@@ -35,5 +41,13 @@ def parse_github_slug(remote_url: str) -> str | None:
         host, path = scp_like["host"], scp_like["path"]
     if host is None or host.lower() not in _HOSTS:
         return None
-    owner_and_name = _OWNER_AND_NAME.match(path.strip("/").removesuffix(".git"))
-    return f"{owner_and_name['owner']}/{owner_and_name['name']}" if owner_and_name else None
+    slug = path.strip("/").removesuffix(".git")
+    return slug if _OWNER_AND_NAME.fullmatch(slug) else None
+
+
+async def origin_github_slug(checkout: Path) -> str | None:
+    """Resolve the checkout's current GitHub origin without exposing its URL."""
+    completed = await tree.run(
+        ["git", "-C", str(checkout), "--git-dir=.git", "remote", "get-url", "origin"], checkout, timeout_s=10.0
+    )
+    return parse_github_slug(completed.stdout) if completed.ok else None

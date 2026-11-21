@@ -310,6 +310,38 @@ describe("SettingsPage service sections", () => {
     ]);
   });
 
+  test("adds a repository policy through the Automation settings schema", async () => {
+    const api = routeConfig(mockApi(), "discovery", { ...DISCOVERY_CONFIG });
+    routeConfig(api, "automation", { repositories: [] });
+    const { user } = renderWithProviders(<SettingsPage />, { path: "/settings" });
+    await screen.findByRole("heading", { name: "Discovery" });
+    await openSection(user, "Automation");
+    await user.click(await screen.findByRole("button", { name: "Add" }));
+    const enabled = screen.getByRole("switch", { name: "Enable automation" });
+    expect(enabled.getAttribute("aria-checked")).toBe("false");
+    await user.type(formField("repo").getByRole("textbox"), "team/widget");
+    await user.type(formField("owner").getByRole("textbox"), "maintainer");
+    await user.click(enabled);
+    await user.click(screen.getByRole("checkbox", { name: "Queue issue" }));
+    await user.click(formField("provider_route").getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "Codex" }));
+    await user.click(saveButton());
+    await screen.findByText("Automation settings saved");
+    expect(api.callsTo("PUT", "/api/services/automation/config").map((call) => call.body)).toEqual([
+      {
+        repositories: [
+          {
+            repo: "team/widget",
+            owner: "maintainer",
+            enabled: true,
+            automatic_actions: ["queue-issue"],
+            provider_route: "codex",
+          },
+        ],
+      },
+    ]);
+  });
+
   test("hides dependent fields while their controlling switch is off", async () => {
     const api = routeConfig(mockApi(), "discovery", { ...DISCOVERY_CONFIG });
     routeConfig(api, "events", {

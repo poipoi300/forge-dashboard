@@ -163,9 +163,12 @@ class Service[ConfigT: BaseModel, StateT: BaseModel]:
     async def update_config(self, config: ConfigT) -> ConfigT:
         previous = self.config
         self.config = config
-        await self.runtime.db.kv_put("config", self.id, config.model_dump(mode="json"))
+        await self._persist_config(config)
         await self.on_config_changed(previous)
         return self.config
+
+    async def _persist_config(self, config: ConfigT) -> None:
+        await self.runtime.db.kv_put("config", self.id, config.model_dump(mode="json"))
 
     def set_state(self, state: StateT) -> None:
         self.state = state

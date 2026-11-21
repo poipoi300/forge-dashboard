@@ -2718,6 +2718,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/services/automation/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Endpoint */
+        get: operations["automation_get_config"];
+        /** Endpoint */
+        put: operations["automation_put_config"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/automation/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Endpoint */
+        get: operations["automation_get_state"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/services/settings/config": {
         parameters: {
             query?: never;
@@ -3521,6 +3556,14 @@ export interface components {
          * @enum {string}
          */
         AuthSource: "environment" | "gh-cli" | "git-credential" | "keyring" | "none";
+        /** AutomationConfig */
+        AutomationConfig: {
+            /**
+             * Repositories
+             * @default []
+             */
+            repositories: components["schemas"]["RepoAutomationPolicy"][];
+        };
         /** BackupInfo */
         BackupInfo: {
             /** Name */
@@ -6204,6 +6247,12 @@ export interface components {
          * @description Input of an action that takes no parameters.
          */
         NoInput: Record<string, never>;
+        /** NoInputSnapshot */
+        NoInputSnapshot: {
+            /** Rev */
+            rev: number;
+            state: components["schemas"]["NoInput"];
+        };
         /**
          * NoReady
          * @description Ready as soon as the process starts.
@@ -6806,6 +6855,36 @@ export interface components {
             project_id: string;
             /** Metric Id */
             metric_id?: string | null;
+        };
+        /** RepoAutomationPolicy */
+        RepoAutomationPolicy: {
+            /**
+             * GitHub repository
+             * @description Repository from the origin remote, in owner/name form.
+             */
+            repo: string;
+            /**
+             * Maintainer login
+             * @description GitHub login of the maintainer for this repository.
+             */
+            owner: string;
+            /**
+             * Enable automation
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Automatic Actions
+             * @description Actions allowed automatically when automation is enabled. All other actions require approval.
+             * @default []
+             */
+            automatic_actions: ("push" | "open-pull-request" | "merge-branch" | "create-issue" | "comment" | "close-issue" | "reopen-issue" | "set-labels" | "rerun-failed-jobs" | "queue-issue")[];
+            /**
+             * Provider route
+             * @description Provider account to use for this repository's automated model calls.
+             * @enum {string}
+             */
+            provider_route: "claude" | "codex" | "grok";
         };
         /** RepoState */
         RepoState: {
@@ -12583,6 +12662,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    automation_get_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationConfig"];
+                };
+            };
+        };
+    };
+    automation_put_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutomationConfig"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationConfig"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    automation_get_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoInputSnapshot"];
                 };
             };
         };

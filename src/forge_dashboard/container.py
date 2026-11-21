@@ -7,6 +7,7 @@ from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.github.bridge import GitHubBridge
 from forge_dashboard.services.actions import ActionsService
 from forge_dashboard.services.agents import AgentsService
+from forge_dashboard.services.automation import AutomationService
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import DiscoveryService
 from forge_dashboard.services.events import EventsService
@@ -66,6 +67,7 @@ def build_runtime(paths: DataPaths) -> Runtime:
             MachineService(runtime, projects),
             ForgeRunsService(runtime, projects),
             GalleryService(runtime, jobs),
+            AutomationService(runtime),
             SettingsService(runtime, projects),
             ActionsService(runtime, projects, jobs, project_services.url_for),
             discovery,

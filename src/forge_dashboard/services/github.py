@@ -99,8 +99,7 @@ from forge_dashboard.github.payloads import (
     WorkflowPayload,
     WorkflowsPayload,
 )
-from forge_dashboard.github.remote import parse_github_slug
-from forge_dashboard.process import tree
+from forge_dashboard.github.remote import origin_github_slug
 from forge_dashboard.services.discovery import ChangeKind
 from forge_dashboard.services.jobs import JobsService
 from forge_dashboard.services.projects import ProjectListener, ProjectRecord, ProjectsService
@@ -108,7 +107,6 @@ from forge_dashboard.services.projects import ProjectListener, ProjectRecord, Pr
 if TYPE_CHECKING:
     from forge_dashboard.core.runtime import Runtime
 
-GIT_TIMEOUT_S = 10.0
 # Shortest sleep between poll rounds, so a mistake in a due time can never spin the loop.
 POLL_FLOOR_S = 1.0
 CACHE_MAX_AGE_S = 30 * 24 * 3600
@@ -447,10 +445,7 @@ class GitHubService(Service[GitHubConfig, GitHubState], ProjectListener):
     async def _origin_slug(self, record: ProjectRecord) -> str | None:
         if not record.is_git:
             return None
-        completed = await tree.run(
-            ["git", "-C", str(record.path), "remote", "get-url", "origin"], record.path, timeout_s=GIT_TIMEOUT_S
-        )
-        return parse_github_slug(completed.stdout) if completed.ok else None
+        return await origin_github_slug(record.path)
 
     async def _track(self, record: ProjectRecord, slug: str | None, *, repoll: bool) -> None:
         """Start following a project, or update it; a new repository is polled at once, an unchanged one when asked."""

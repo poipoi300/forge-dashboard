@@ -142,6 +142,15 @@ to their section.
   policies, editor commands, hidden flags, and metric interval overrides are
   kv entries keyed by project id; the manifest stays the default and is never
   written by these settings.
+- **Automation policy belongs to the maintainer.** Settings → Automation
+  stores policies in the dashboard database under case-insensitive GitHub
+  `owner/name` identities. Each entry names the maintainer's GitHub login
+  and the provider for automated calls. Automation defaults to off. When
+  enabled, only selected actions are eligible to run without approval.
+  `AutomationService.policy_for_project` reads the current origin for issue
+  and scheduling work. The write broker must use `policy_for_repo` with the
+  actual write target, including the push destination when it differs from
+  the origin's fetch URL. The manifest has no automation policy fields.
 
 ## Projects, launch, and logs
 
