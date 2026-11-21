@@ -12,6 +12,7 @@ from testing_support import wait_for
 from forge_dashboard.core.paths import DataPaths
 from forge_dashboard.core.runtime import Runtime
 from forge_dashboard.core.service import ActionError, NoInput, ProjectRef
+from forge_dashboard.domain.requirements import DoctorError, DoctorReport, HarnessReport, ToolReport
 from forge_dashboard.domain.summary import CheckFacts, HealthLevel, IssueFacts, Lifecycle
 from forge_dashboard.manifest import ProjectManifest, parse_manifest_text
 from forge_dashboard.services.discovery import ChangeKind, DiscoveryService, PathInput
@@ -88,6 +89,62 @@ async def registry(
 
 async def _add(discovery: DiscoveryService, path: Path) -> None:
     await discovery.add_project(PathInput(path=str(path)))
+
+
+async def test_project_health_uses_the_doctor_and_clears_stale_requirements(
+    registry: tuple[ProjectsService, DiscoveryService, Recorder],
+    make_project: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    projects, discovery, _recorder = registry
+    alpha = make_project(
+        "Alpha", manifest=MANIFEST + '\n[requirements]\nrequired = ["bun", "git"]\noptional = ["gh"]\n'
+    )
+    manifest = alpha / "forge.project.toml"
+    bun = ToolReport(
+        name="bun", status="missing", required=True, path=None, version=None, package=None, ownership_unknown=False
+    )
+    git = ToolReport(
+        name="git",
+        status="unmanaged",
+        required=True,
+        path="/local/git",
+        version=None,
+        package=None,
+        ownership_unknown=False,
+    )
+    gh = bun.model_copy(update={"name": "gh", "required": False})
+    pi = HarnessReport(cli="pi", status="unavailable", missing=("pi",))
+    report: DoctorReport | None = DoctorReport(ok=False, tools=(bun, git, gh), harnesses={"pi": pi})
+
+    def read_report(path: Path) -> DoctorReport:
+        assert path == manifest
+        if report is None:
+            raise DoctorError("Forge doctor is unavailable")
+        return report
+
+    monkeypatch.setattr("forge_dashboard.services.projects.read_report", read_report)
+    await _add(discovery, alpha)
+    await wait_for(lambda: projects.summary("alpha").health.level is HealthLevel.FAILING)
+    assert [(r.source, r.level, r.message) for r in projects.summary("alpha").health.reasons] == [
+        ("requirements", HealthLevel.FAILING, "Missing host tools: bun"),
+        ("requirements", HealthLevel.WARN, "Unmanaged host tools: git"),
+    ]
+
+    installed_bun = bun.model_copy(update={"status": "present", "path": "/usr/bin/bun"})
+    report = DoctorReport(ok=True, tools=(installed_bun, git, gh), harnesses={"pi": pi})
+    await projects.poll_requirements()
+    assert projects.summary("alpha").health.level is HealthLevel.WARN
+    assert projects.summary("alpha").health.reasons[0].message == "Unmanaged host tools: git"
+
+    report = None
+    await projects.poll_requirements()
+    assert projects.summary("alpha").health.reasons[0].message == "Forge doctor is unavailable"
+
+    text = manifest.read_text(encoding="utf-8")
+    manifest.write_text(text.split("[requirements]")[0], encoding="utf-8")
+    await projects.refresh("alpha")
+    assert projects.summary("alpha").health.reasons == []
 
 
 async def test_managed_projects_get_manifest_ids_and_v1_progress(

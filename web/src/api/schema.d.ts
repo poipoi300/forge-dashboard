@@ -5503,6 +5503,15 @@ export interface components {
             /** Max Turns Args */
             max_turns_args?: string[];
         };
+        /** HarnessRequirements */
+        HarnessRequirements: {
+            /** Required */
+            required: string[];
+            /** Optional */
+            optional: string[];
+            /** Cli */
+            cli: string;
+        };
         /** HarnessStatus */
         HarnessStatus: {
             /** Available */
@@ -5523,7 +5532,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "ci" | "checks" | "manifest" | "standards" | "services";
+            source: "ci" | "checks" | "manifest" | "requirements" | "standards" | "services";
             level: components["schemas"]["HealthLevel"];
             /** Message */
             message: string;
@@ -5552,6 +5561,21 @@ export interface components {
             sha: string | null;
             /** Dirty */
             dirty: boolean;
+        };
+        /** HostRequirements */
+        HostRequirements: {
+            /** Required */
+            required: string[];
+            /** Optional */
+            optional: string[];
+            /** Gate */
+            gate: {
+                [key: string]: components["schemas"]["RequirementTools"];
+            };
+            /** Harness */
+            harness: {
+                [key: string]: components["schemas"]["HarnessRequirements"];
+            };
         };
         /**
          * HttpReady
@@ -6556,6 +6580,7 @@ export interface components {
             schema: 1;
             project: components["schemas"]["Project"];
             v1: components["schemas"]["V1"];
+            requirements: components["schemas"]["HostRequirements"] | null;
             /** Checks */
             checks: components["schemas"]["Check"][];
             /** Services */
@@ -6871,6 +6896,13 @@ export interface components {
             project_id: string;
             /** Check Id */
             check_id: string;
+        };
+        /** RequirementTools */
+        RequirementTools: {
+            /** Required */
+            required: string[];
+            /** Optional */
+            optional: string[];
         };
         /** RestoreInput */
         RestoreInput: {

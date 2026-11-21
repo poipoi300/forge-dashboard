@@ -2868,6 +2868,78 @@
               "title": "ForgeAlignment",
               "type": "object"
             },
+            "HarnessRequirements": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                },
+                "cli": {
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                  "title": "Cli",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "cli"
+              ],
+              "title": "HarnessRequirements",
+              "type": "object"
+            },
+            "HostRequirements": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                },
+                "gate": {
+                  "patternProperties": {
+                    "^[a-z0-9][a-z0-9-]*$": {
+                      "$ref": "#/$defs/RequirementTools"
+                    }
+                  },
+                  "title": "Gate",
+                  "type": "object"
+                },
+                "harness": {
+                  "patternProperties": {
+                    "^[a-z0-9][a-z0-9-]*$": {
+                      "$ref": "#/$defs/HarnessRequirements"
+                    }
+                  },
+                  "title": "Harness",
+                  "type": "object"
+                }
+              },
+              "title": "HostRequirements",
+              "type": "object"
+            },
             "HttpReady": {
               "additionalProperties": false,
               "description": "Ready when GET `path` answers `expect_status`.",
@@ -3397,6 +3469,17 @@
                 "v1": {
                   "$ref": "#/$defs/V1"
                 },
+                "requirements": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/HostRequirements"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
                 "checks": {
                   "items": {
                     "$ref": "#/$defs/Check"
@@ -3461,6 +3544,29 @@
                 "v1"
               ],
               "title": "forge.project.toml",
+              "type": "object"
+            },
+            "RequirementTools": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                }
+              },
+              "title": "RequirementTools",
               "type": "object"
             },
             "Service": {
@@ -4124,6 +4230,78 @@
               "title": "ForgeAlignment",
               "type": "object"
             },
+            "HarnessRequirements": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                },
+                "cli": {
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                  "title": "Cli",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "cli"
+              ],
+              "title": "HarnessRequirements",
+              "type": "object"
+            },
+            "HostRequirements": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                },
+                "gate": {
+                  "patternProperties": {
+                    "^[a-z0-9][a-z0-9-]*$": {
+                      "$ref": "#/$defs/RequirementTools"
+                    }
+                  },
+                  "title": "Gate",
+                  "type": "object"
+                },
+                "harness": {
+                  "patternProperties": {
+                    "^[a-z0-9][a-z0-9-]*$": {
+                      "$ref": "#/$defs/HarnessRequirements"
+                    }
+                  },
+                  "title": "Harness",
+                  "type": "object"
+                }
+              },
+              "title": "HostRequirements",
+              "type": "object"
+            },
             "HttpReady": {
               "additionalProperties": false,
               "description": "Ready when GET `path` answers `expect_status`.",
@@ -4653,6 +4831,17 @@
                 "v1": {
                   "$ref": "#/$defs/V1"
                 },
+                "requirements": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/HostRequirements"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
                 "checks": {
                   "items": {
                     "$ref": "#/$defs/Check"
@@ -4717,6 +4906,29 @@
                 "v1"
               ],
               "title": "forge.project.toml",
+              "type": "object"
+            },
+            "RequirementTools": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                }
+              },
+              "title": "RequirementTools",
               "type": "object"
             },
             "Service": {
@@ -5732,6 +5944,7 @@
                 "ci",
                 "checks",
                 "manifest",
+                "requirements",
                 "standards",
                 "services"
               ],
@@ -7959,6 +8172,37 @@
               "title": "GitFacts",
               "type": "object"
             },
+            "HarnessRequirements": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                },
+                "cli": {
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                  "title": "Cli",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "cli"
+              ],
+              "title": "HarnessRequirements",
+              "type": "object"
+            },
             "Health": {
               "description": "Computed rollup; `reasons` explain it.",
               "properties": {
@@ -8012,6 +8256,7 @@
                     "ci",
                     "checks",
                     "manifest",
+                    "requirements",
                     "standards",
                     "services"
                   ],
@@ -8032,6 +8277,47 @@
                 "message"
               ],
               "title": "HealthReason",
+              "type": "object"
+            },
+            "HostRequirements": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                },
+                "gate": {
+                  "patternProperties": {
+                    "^[a-z0-9][a-z0-9-]*$": {
+                      "$ref": "#/$defs/RequirementTools"
+                    }
+                  },
+                  "title": "Gate",
+                  "type": "object"
+                },
+                "harness": {
+                  "patternProperties": {
+                    "^[a-z0-9][a-z0-9-]*$": {
+                      "$ref": "#/$defs/HarnessRequirements"
+                    }
+                  },
+                  "title": "Harness",
+                  "type": "object"
+                }
+              },
+              "title": "HostRequirements",
               "type": "object"
             },
             "HttpReady": {
@@ -8965,6 +9251,17 @@
                 "v1": {
                   "$ref": "#/$defs/V1"
                 },
+                "requirements": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/HostRequirements"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
                 "checks": {
                   "items": {
                     "$ref": "#/$defs/Check"
@@ -9467,6 +9764,29 @@
                 "machine"
               ],
               "title": "ProjectSummary",
+              "type": "object"
+            },
+            "RequirementTools": {
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Required",
+                  "type": "array"
+                },
+                "optional": {
+                  "items": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  },
+                  "title": "Optional",
+                  "type": "array"
+                }
+              },
+              "title": "RequirementTools",
               "type": "object"
             },
             "Service": {
@@ -10829,6 +11149,7 @@
                     "ci",
                     "checks",
                     "manifest",
+                    "requirements",
                     "standards",
                     "services"
                   ],

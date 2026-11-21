@@ -211,7 +211,8 @@ async def test_adopt_writes_a_valid_manifest_with_a_repair_loop(
     [run] = (await agents.branch_runs(BranchRunsInput(project_id=project_id, kind="adopt"))).runs
     assert run.agent_attempts == 2 and run.state is BranchRunState.READY
     await agents.merge_branch(BranchRunInput(run_id=run.id))
-    assert (loose / "forge.project.toml").is_file()
+    adopted = tomllib.loads((loose / "forge.project.toml").read_text(encoding="utf-8"))
+    assert adopted["requirements"] == {}
     await projects.refresh(project_id)
     with pytest.raises(ActionError, match="already has"):
         await standards.adopt(ProjectRef(project_id=project_id))

@@ -1,7 +1,7 @@
 # forge project manifest: `forge.project.toml` (schema 1)
 
 Every forge project carries `forge.project.toml` at its repository root. It is
-the project's self-description: identity, V1 roadmap, local checks, services,
+the project's self-description: identity, V1 roadmap, host tools, local checks, services,
 deployments, custom metrics, and custom actions. The forge dashboard reads it
 and assumes nothing else about a project.
 
@@ -78,6 +78,41 @@ With `source = "milestones"`, one or more `[[v1.milestones]]`:
 
 Progress = sum of `weight` where `done` / sum of all `weight`. The "next
 milestone" is the first not-done entry in file order.
+
+## `[requirements]` (optional)
+
+Declare executables expected on the host's PATH. List external tools such as
+`uv` and `bun` here. Tools installed into a project environment by those
+executables belong in the project's dependency files.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `required` | list of executable names | `[]` | Host tools needed by the project. |
+| `optional` | list of executable names | `[]` | Host tools that are advisory. |
+| `gate` | table keyed by gate ID | `{}` | Each gate accepts `required` and `optional` lists. |
+| `harness` | table keyed by harness ID | `{}` | Each harness takes a `cli` executable and accepts `required` and `optional` lists. |
+
+Lists default to empty. Executables use bare names without paths, flags, or
+arguments. Gate and harness IDs are slugs. A harness with a missing CLI or
+required dependency is unavailable. Missing required project or gate
+executables fail project health, and unmanaged required executables are
+warnings. Optional tools and unavailable harnesses are advisory.
+
+```toml
+[requirements]
+required = ["git"]
+optional = ["gh"]
+
+[requirements.gate.pytest]
+required = ["uv"]
+
+[requirements.harness.claude]
+cli = "claude"
+```
+
+The dashboard's Adopt action writes this table using evidence from the
+repository, including an empty table when the repository has no declared
+host tools.
 
 ## `[[checks]]` (0..n)
 

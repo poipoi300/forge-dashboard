@@ -3,6 +3,15 @@
 # the TUI runner, which installs dependencies, builds the UI, starts the API,
 # and opens the browser. Arguments are forwarded (try --help).
 set -euo pipefail
+for argument in "$@"; do
+  if [[ "$argument" == "--check" ]]; then
+    if ! command -v uv >/dev/null 2>&1; then
+      printf '%s\n' 'uv is required to run dashboard preflight.' >&2
+      exit 1
+    fi
+    exec uv --directory "$(dirname "$0")" run --no-sync -m forge_dashboard.runner "$@"
+  fi
+done
 cd "$(dirname "$0")"
 
 if ! command -v uv >/dev/null 2>&1; then

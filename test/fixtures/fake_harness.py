@@ -99,13 +99,14 @@ elif "# Adopt" in prompt:
     say("Writing forge.project.toml from the repository.")
     name = cwd.name
     if sabotage:
-        manifest_text = 'schema = 1\n\n[project]\nname = "unfinished"\n'
-    else:
-        manifest_text = (
-            f'schema = 1\n\n[project]\nname = "{name}"\nid = "adopted"\nsummary = "Adopted by the dashboard"\n'
-            'kind = "tool"\nlanguages = ["python"]\n\n[v1]\nsource = "milestones"\n\n'
-            '[[v1.milestones]]\nid = "first"\ntitle = "First milestone"\n'
-        )
+        say("Omitting the requirements table on the first attempt.")
+    manifest_text = (
+        f'schema = 1\n\n[project]\nname = "{name}"\nid = "adopted"\nsummary = "Adopted by the dashboard"\n'
+        'kind = "tool"\nlanguages = ["python"]\n\n[v1]\nsource = "milestones"\n\n'
+        '[[v1.milestones]]\nid = "first"\ntitle = "First milestone"\n'
+    )
+    if not sabotage:
+        manifest_text += "\n[requirements]\n"
     (cwd / "forge.project.toml").write_text(manifest_text, encoding="utf-8", newline="\n")
     tool("Write", "forge.project.toml")
 else:

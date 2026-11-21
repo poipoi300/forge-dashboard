@@ -24,11 +24,24 @@ it streams prefixed logs instead of drawing the TUI.
 | Runner flag | Effect |
 |---|---|
 | `--dev` | also run the Bun dev server with hot reload, proxied to the API |
-| `--check` | check executables and ports, then exit |
+| `--check` | report host-tool requirements through Forge doctor and check ports, then exit |
 | `--no-browser` | do not open the WebUI |
 | `--no-autostart` | open the TUI without starting services |
 | `--only NAME ...` | manage a subset of services |
 | `--plain` | stream plain logs even on a terminal |
+
+Runner preflight and project health use the same Forge doctor report. Put a
+doctor-enabled `forge` CLI on PATH, or set `FORGE_DASHBOARD_FORGE_REPO` to
+a trusted Forge checkout containing `forge doctor`. The dashboard runs the
+doctor from that checkout using its current Python. It installs no Forge
+dependencies for the check.
+
+Preflight checks the dashboard's own manifest. For other projects, dashboard
+health reports missing required tools and warns about unmanaged required
+tools. Project health checks do not execute the project's tools to obtain
+versions. The launcher's `--check` uses an already initialized dashboard
+environment and installs no tools. Project health refreshes every five
+minutes and when you refresh a project.
 
 The API answers only on this computer: it refuses requests whose `Host` or
 `Origin` is not a loopback address, so no web page you visit can drive it.

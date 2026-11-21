@@ -2,6 +2,14 @@
 # the TUI runner, which installs dependencies, builds the UI, starts the API,
 # and opens the browser. Arguments are forwarded (try -- --help).
 $ErrorActionPreference = "Stop"
+if ($args -ccontains "--check") {
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        [Console]::Error.WriteLine("uv is required to run dashboard preflight.")
+        exit 1
+    }
+    & uv --directory $PSScriptRoot run --no-sync -m forge_dashboard.runner @args
+    exit $LASTEXITCODE
+}
 Set-Location -LiteralPath $PSScriptRoot
 
 function Install-Tool {

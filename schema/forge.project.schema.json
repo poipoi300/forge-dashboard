@@ -398,6 +398,78 @@
       "title": "ForgeAlignment",
       "type": "object"
     },
+    "HarnessRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "cli": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+          "title": "Cli",
+          "type": "string"
+        },
+        "optional": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+            "type": "string"
+          },
+          "title": "Optional",
+          "type": "array"
+        },
+        "required": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+            "type": "string"
+          },
+          "title": "Required",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cli"
+      ],
+      "title": "HarnessRequirements",
+      "type": "object"
+    },
+    "HostRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "gate": {
+          "patternProperties": {
+            "^[a-z0-9][a-z0-9-]*$": {
+              "$ref": "#/$defs/RequirementTools"
+            }
+          },
+          "title": "Gate",
+          "type": "object"
+        },
+        "harness": {
+          "patternProperties": {
+            "^[a-z0-9][a-z0-9-]*$": {
+              "$ref": "#/$defs/HarnessRequirements"
+            }
+          },
+          "title": "Harness",
+          "type": "object"
+        },
+        "optional": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+            "type": "string"
+          },
+          "title": "Optional",
+          "type": "array"
+        },
+        "required": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+            "type": "string"
+          },
+          "title": "Required",
+          "type": "array"
+        }
+      },
+      "title": "HostRequirements",
+      "type": "object"
+    },
     "HttpReady": {
       "additionalProperties": false,
       "description": "Ready when GET `path` answers `expect_status`.",
@@ -880,6 +952,29 @@
       "title": "Project",
       "type": "object"
     },
+    "RequirementTools": {
+      "additionalProperties": false,
+      "properties": {
+        "optional": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+            "type": "string"
+          },
+          "title": "Optional",
+          "type": "array"
+        },
+        "required": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+            "type": "string"
+          },
+          "title": "Required",
+          "type": "array"
+        }
+      },
+      "title": "RequirementTools",
+      "type": "object"
+    },
     "Service": {
       "additionalProperties": false,
       "description": "One `[[services]]` entry: a long-running process the dashboard launches.",
@@ -1141,6 +1236,17 @@
     },
     "project": {
       "$ref": "#/$defs/Project"
+    },
+    "requirements": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/HostRequirements"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "schema": {
       "const": 1,

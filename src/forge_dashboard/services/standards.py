@@ -191,6 +191,11 @@ def adopt_brief(*, listing: str, readme: str, contract: str, schema: str, proble
             "identity, languages, V1 milestones that reflect what exists and what is missing, the checks its gates run "
             "(argv arrays, JUnit where the test runner supports it), and services it can launch."
         ),
+        (
+            "Include a [requirements] table for host executables used by this repository. Declare required and "
+            "optional tools from repository evidence, with per-gate and per-harness entries where applicable. "
+            "Include an empty [requirements] table if the repository declares no host tools."
+        ),
         "Edit only forge.project.toml. Do not run git or any command.",
         f"## Files in the repository\n{listing}",
         f"## README\n{readme or '(none)'}",
@@ -551,11 +556,15 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
                         )
                         return JobOutcome(status=JobStatus.FAILED, summary=f"agent {agent.outcome}")
                     result = load_manifest(worktree.path)
-                    if result.valid:
+                    if result.manifest is not None and result.manifest.requirements is not None:
                         context.log(f"manifest valid after {attempt} attempt(s)")
                         problems = None
                         break
-                    problems = "\n".join(issue.render(MANIFEST_FILENAME) for issue in result.issues)
+                    problems = (
+                        f"{MANIFEST_FILENAME}: add a [requirements] table for the repository's host tools"
+                        if result.valid
+                        else "\n".join(issue.render(MANIFEST_FILENAME) for issue in result.issues)
+                    )
                     context.log(f"attempt {attempt}: manifest invalid:\n{problems}")
                 await worktrees.commit_all(worktree.path, "Add forge.project.toml")
                 run = run.model_copy(update={"agent_run_ids": agent_ids, "agent_attempts": len(agent_ids)})
