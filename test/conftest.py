@@ -14,6 +14,14 @@ from forge_dashboard.services.gallery import GalleryService
 from forge_dashboard.services.jobs import JobsService
 from forge_dashboard.services.scheduler import SchedulerService
 
+# A git hook exports GIT_DIR (and from a linked worktree it names the worktree), so a
+# suite run by pre-push would point every fixture repo at the real repository. Drop the
+# variables git itself clears for submodules before any test runs git.
+for _name in subprocess.run(
+    ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
+).stdout.split():
+    os.environ.pop(_name, None)
+
 
 @pytest.fixture
 def data_paths(tmp_path: Path) -> DataPaths:
