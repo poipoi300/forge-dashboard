@@ -381,7 +381,8 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
         slug = forge.slug()
         if agents.is_file() and slug is not None and revision is not None:
             text = agents.read_text(encoding="utf-8")
-            linked = rules.apply_rule_links(text, slug, revision, self.config.travelling_sections)
+            forge_sections = forge.rule_sections_at(revision) or {}
+            linked = rules.apply_rule_links(text, slug, revision, self.config.travelling_sections, forge_sections)
             if linked != text:
                 agents.write_text(linked, encoding="utf-8", newline="\n")
                 changed.append("AGENTS.md (links to forge's working rules)")
@@ -425,7 +426,9 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
         slug = forge.slug()
         if slug is None:
             raise ActionError("forge's checkout has no GitHub origin remote for projects to reference", status=409)
-        if forge.published_hooks("HEAD") is None:
+        # One forge commit for the whole bring-up, validated before anything is written.
+        head = forge.resolve("HEAD")
+        if head is None or forge.published_hooks(head) is None:
             raise ActionError("forge publishes no .pre-commit-hooks.yaml at its HEAD", status=409)
 
         async def work(context: JobContext) -> JobOutcome:
@@ -440,7 +443,6 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
                 job_id=context.job_id,
             )
             async with self._agents.guard_branch_run(run, record.path):
-                head, _subject = await self._forge_head(forge)
                 travelling = self.config.travelling_sections
                 before = await asyncio.to_thread(
                     rules.evaluate, worktree.path, forge, travelling_sections=travelling, forge_head=head

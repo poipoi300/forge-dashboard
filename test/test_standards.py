@@ -249,7 +249,7 @@ def test_a_pin_must_be_a_forge_commit_that_publishes_the_hooks_and_workflow(
     project = _referencing_project(tmp_path, git, hooks_rev=unknown, ci_rev=unknown)
     assert (
         _evaluate(project, forge_repo)["forge-hooks"]
-        == f"forge commit {unknown} is not in forge's checkout (fetch forge)"
+        == f"rev {unknown} is not a commit in forge's checkout (fetch forge)"
     )
     git(forge_repo, "rm", "-q", ".pre-commit-hooks.yaml", ".github/workflows/gates.yml")
     bare = git.commit_all(forge_repo, "Unpublish")
@@ -263,7 +263,9 @@ def test_ci_needs_the_workflow_at_the_pinned_commit(forge_repo: Path, tmp_path: 
     git(forge_repo, "rm", "-q", ".github/workflows/gates.yml")
     revision = git.commit_all(forge_repo, "Drop the workflow")
     project = _referencing_project(tmp_path, git, hooks_rev=revision, ci_rev=revision)
-    assert _evaluate(project, forge_repo) == {"ci": f"forge commit {revision} has no .github/workflows/gates.yml"}
+    assert _evaluate(project, forge_repo) == {
+        "ci": f"forge commit {revision} has no reusable .github/workflows/gates.yml"
+    }
 
 
 @pytest.mark.parametrize(
@@ -344,14 +346,117 @@ def test_rule_links_count_only_as_visible_markdown_links(
 
 
 def test_rule_links_leave_fenced_examples_and_a_project_section_of_that_name(forge_repo: Path) -> None:
-    verifying = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))["Verifying"]
+    forge_sections = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
+    verifying = forge_sections["Verifying"]
     own = "## Working rules from forge\n\nOur own notes.\n"
     example = f"## Examples\n\n```md\n{verifying}```\n"
     text = f"# Mine\n\n{example}\n{own}\n{verifying.rstrip()}"
-    linked = rules.apply_rule_links(text, "owner/forge", "a" * 40, TRAVELLING)
+    linked = rules.apply_rule_links(text, "owner/forge", "a" * 40, TRAVELLING, forge_sections)
     assert example in linked and own in linked
     assert linked.count("A task is done when the gates pass.") == 1, "the copy at EOF without a newline is gone"
     assert linked.endswith(_links("a" * 40))
+
+
+def test_a_longer_fence_holds_shorter_fence_lines_and_headings(forge_repo: Path) -> None:
+    forge_sections = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
+    example = "## Examples\n\n````md\n```\n## Verifying\n\nOurs.\n```\n````\n"
+    linked = rules.apply_rule_links(f"# Mine\n\n{example}", "owner/forge", "a" * 40, TRAVELLING, forge_sections)
+    assert linked.startswith(f"# Mine\n\n{example}")
+
+
+def test_a_projects_own_section_under_a_rule_heading_is_kept_and_reported(
+    forge_repo: Path, tmp_path: Path, git: Git
+) -> None:
+    forge_sections = rules.sections((forge_repo / "AGENTS.md").read_text(encoding="utf-8"))
+    own = "## Verifying\n\nRun the oracle captures on Windows too.\n"
+    linked = rules.apply_rule_links(f"# Mine\n\n{own}", "owner/forge", "a" * 40, TRAVELLING, forge_sections)
+    assert own in linked
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    agents = project / "AGENTS.md"
+    agents.write_text(agents.read_text(encoding="utf-8") + "\n" + own, encoding="utf-8")
+    assert _evaluate(project, forge_repo)["agents-sections"] == "has its own sections named like forge's: Verifying"
+
+
+def test_legacy_stage_names_and_stage_order_resolve_like_pre_commit(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    _set_precommit(
+        project, "default_stages: [commit]\nrepos:" + _forge_entry(head, push_stages="\n        stages: [push]") + "\n"
+    )
+    assert "base-hooks" not in _evaluate(project, forge_repo)
+
+
+def test_an_annotated_tag_sha_is_not_a_commit_pin(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    git(forge_repo, "tag", "-a", "v1", "-m", "v1")
+    tag = git(forge_repo, "rev-parse", "v1")
+    project = _referencing_project(tmp_path, git, hooks_rev=tag, ci_rev=tag)
+    assert (
+        _evaluate(project, forge_repo)["forge-hooks"] == f"rev {tag} is not a commit in forge's checkout (fetch forge)"
+    )
+
+
+def test_rule_links_must_name_a_forge_commit_with_those_sections(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head, links_rev="0" * 40)
+    assert _evaluate(project, forge_repo)["agents-sections"] == (
+        "no pinned link to: A note from the maintainer, Verifying, Commits, Taste"
+    )
+
+
+@pytest.mark.parametrize(
+    ("workflow", "as_directory"),
+    [("on:\n  push:\njobs: {}\n", False), ("", True)],
+)
+def test_ci_needs_a_reusable_workflow_file_at_the_pin(
+    forge_repo: Path, tmp_path: Path, git: Git, workflow: str, as_directory: bool
+) -> None:
+    gates = forge_repo / ".github" / "workflows" / "gates.yml"
+    if as_directory:
+        git(forge_repo, "rm", "-q", str(gates))
+        (gates / "README.md").parent.mkdir(parents=True)
+        (gates / "README.md").write_text("not a workflow\n", encoding="utf-8")
+    else:
+        gates.write_text(workflow, encoding="utf-8")
+    revision = git.commit_all(forge_repo, "Break the workflow")
+    project = _referencing_project(tmp_path, git, hooks_rev=revision, ci_rev=revision)
+    assert (
+        _evaluate(project, forge_repo)["ci"] == f"forge commit {revision} has no reusable .github/workflows/gates.yml"
+    )
+
+
+def test_a_forge_entry_without_hooks_is_invalid_config(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    config = project / ".pre-commit-config.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8") + f"  - repo: {FORGE_URL}\n    rev: {head}\n", encoding="utf-8"
+    )
+    assert _evaluate(project, forge_repo)["forge-hooks"] == "no valid .pre-commit-config.yaml"
+
+
+@pytest.mark.parametrize(
+    "form",
+    ["- `[{name}]({url})`", "[ref-{n}]: {url}"],
+)
+def test_links_in_inline_code_and_unused_references_do_not_count(
+    forge_repo: Path, tmp_path: Path, git: Git, form: str
+) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    lines = [
+        form.format(name=name, n=n, url=f"{FORGE_URL}/blob/{head}/AGENTS.md#{rules.section_anchor(name)}")
+        for n, name in enumerate(TRAVELLING)
+    ]
+    (project / "AGENTS.md").write_text("# Referencing\n\n## Rules\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    assert "agents-sections" in _evaluate(project, forge_repo)
+
+
+def test_a_directory_named_like_a_workflow_is_skipped(forge_repo: Path, tmp_path: Path, git: Git) -> None:
+    head = git(forge_repo, "rev-parse", "HEAD")
+    project = _referencing_project(tmp_path, git, hooks_rev=head, ci_rev=head)
+    (project / ".github" / "workflows" / "examples.yaml").mkdir()
+    assert _evaluate(project, forge_repo) == {}
 
 
 def test_rule_links_replace_copied_sections_and_follow_the_revision(forge_repo: Path) -> None:
@@ -359,10 +464,11 @@ def test_rule_links_replace_copied_sections_and_follow_the_revision(forge_repo: 
     copied = (
         "# Mine\n\n## Intro\n\nHi.\n\n" + rules.sections(forge_agents)["Verifying"] + "\n## Project notes\n\nOurs.\n"
     )
-    linked = rules.apply_rule_links(copied, "owner/forge", "a" * 40, TRAVELLING)
+    forge_sections = rules.sections(forge_agents)
+    linked = rules.apply_rule_links(copied, "owner/forge", "a" * 40, TRAVELLING, forge_sections)
     assert "Hi." in linked and "Ours." in linked and "A task is done when the gates pass." not in linked
     assert linked.endswith(_links("a" * 40))
-    moved = rules.apply_rule_links(linked, "owner/forge", "b" * 40, TRAVELLING)
+    moved = rules.apply_rule_links(linked, "owner/forge", "b" * 40, TRAVELLING, forge_sections)
     assert moved.endswith(_links("b" * 40)) and moved.count("## Working rules") == 1 and "Ours." in moved
 
 
