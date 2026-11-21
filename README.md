@@ -129,3 +129,7 @@ uv run pre-commit install --install-hooks -t pre-commit -t pre-push
 [`docs/SPEC.md`](docs/SPEC.md) the specification, and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) every decision the spec left
 open.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
