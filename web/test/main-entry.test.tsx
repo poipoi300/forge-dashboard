@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { act, screen } from "@testing-library/react";
 import * as reactDomClient from "react-dom/client";
+import * as preferences from "@/app/preferences";
 import { startClock } from "@/lib/time";
 import { installHarness, mockApi, settle } from "./harness";
 
@@ -47,9 +48,16 @@ describe("the application entry point", () => {
       roots.push(root);
       return root;
     });
+    const realApplyPreferences = preferences.applyPreferences;
+    const apply = spyOn(preferences, "applyPreferences").mockImplementation(() => {
+      const stop = realApplyPreferences();
+      restores.push(stop);
+      return stop;
+    });
     restores.push(
       () => interval.mockRestore(),
       () => create.mockRestore(),
+      () => apply.mockRestore(),
     );
   });
 
