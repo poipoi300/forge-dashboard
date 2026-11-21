@@ -12,19 +12,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-import shutil
 import signal
 import sys
 import webbrowser
 from collections.abc import Callable, Sequence
 
+from forge_dashboard.domain.requirements import DoctorError, read_report
 from forge_dashboard.process import ports
 from forge_dashboard.runner.specs import REPO_ROOT, RESERVED_PORTS, browser_target, dashboard_specs
 from forge_dashboard.runner.tui import RunnerApp
 from forge_dashboard.supervisor.core import ServiceSpec, Supervisor, SupervisorEvent, SupervisorEventKind
 
 LOG_DIR = REPO_ROOT / "logs"
-REQUIRED = ("bun",)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,10 +47,8 @@ def select(specs: list[ServiceSpec], only: Sequence[str] | None) -> list[Service
 
 
 def preflight(specs: list[ServiceSpec]) -> list[str]:
-    """Problems that would stop a service from starting; empty when everything is ready."""
-    problems = [
-        f"'{tool}' is not on PATH (the launcher installs it)" for tool in REQUIRED if shutil.which(tool) is None
-    ]
+    """Port problems that would stop a service from starting."""
+    problems: list[str] = []
     for spec in specs:
         request = spec.port
         if request is not None and request.policy == "pinned" and request.pinned is not None:
@@ -65,6 +62,21 @@ def preflight(specs: list[ServiceSpec]) -> list[str]:
         if spec.port is not None and spec.port.preferred in RESERVED_PORTS
     ]
     return problems + reserved_conflicts
+
+
+def _tool_problems() -> list[str]:
+    try:
+        report = read_report(REPO_ROOT, versions=True)
+    except DoctorError as error:
+        return [str(error)]
+    for tool in report.tools:
+        owner = "package ownership unknown" if tool.ownership_unknown else tool.package
+        details = ", ".join(value for value in (tool.version, tool.path, owner) if value)
+        line = f"{tool.name}: {tool.status}" + (f" — {details}" if details else "")
+        print("".join(character if character.isprintable() else ascii(character)[1:-1] for character in line))
+    for name, harness in report.harnesses.items():
+        print(f"harness {name}: {harness.status}")
+    return [f"required tool '{name}' is missing" for name in report.missing_required]
 
 
 def _opener(enabled: bool) -> Callable[[str], object]:
@@ -115,7 +127,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     specs = select(dashboard_specs(dev=args.dev), args.only)
     if args.check:
-        problems = preflight(specs)
+        problems = _tool_problems() + preflight(specs)
         for problem in problems:
             print(f"problem: {problem}")
         print("ok" if not problems else f"{len(problems)} problem(s)")

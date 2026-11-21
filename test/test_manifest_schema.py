@@ -50,6 +50,7 @@ def test_every_documented_table_matches_its_model() -> None:
     tables: dict[str, tuple[type[BaseModel], set[str]]] = {
         "`[project]` (required)": (models.Project, set()),
         "`[v1]` (required)": (models.V1, {"milestones"}),
+        "`[requirements]` (optional)": (models.HostRequirements, set()),
         "`[[checks]]` (0..n)": (models.Check, set()),
         "`[[services]]` (0..n)": (models.Service, set()),
         "`[[deployments]]` (0..n)": (models.Deployment, set()),
@@ -59,7 +60,18 @@ def test_every_documented_table_matches_its_model() -> None:
         "`[forge]` (optional, written by tools)": (models.ForgeAlignment, set()),
         "Top level": (
             models.ProjectManifest,
-            {"project", "v1", "checks", "services", "deployments", "metrics", "actions", "launch", "forge"},
+            {
+                "project",
+                "v1",
+                "requirements",
+                "checks",
+                "services",
+                "deployments",
+                "metrics",
+                "actions",
+                "launch",
+                "forge",
+            },
         ),
     }
     for heading, (model, undocumented_in_table) in tables.items():

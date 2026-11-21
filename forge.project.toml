@@ -9,6 +9,21 @@ languages = ["python", "typescript"]
 tags = ["forge", "dashboard", "tooling"]
 docs = "README.md"
 
+[requirements]
+required = ["bun", "git", "uv"]
+optional = ["gh"]
+
+[requirements.gate]
+pytest = { required = ["uv"] }
+bun-test = { required = ["bun"] }
+ruff = { required = ["uv"] }
+mypy = { required = ["uv"] }
+biome = { required = ["bun"] }
+tsc = { required = ["bun"] }
+
+[requirements.harness.claude]
+cli = "claude"
+
 [v1]
 source = "milestones"
 

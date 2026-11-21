@@ -69,6 +69,39 @@ def test_minimal_manifest_applies_documented_defaults() -> None:
     assert manifest.v1.milestones[0].weight == 1
     assert manifest.v1.milestones[0].done is False
     assert manifest.checks == [] and manifest.services == [] and manifest.launch is None
+    assert manifest.requirements is None
+
+
+def test_manifest_declares_host_gate_and_harness_tools() -> None:
+    report = parse_manifest_text(
+        MINIMAL
+        + """
+[requirements]
+required = ["git"]
+optional = ["cargo-nextest"]
+
+[requirements.gate.pytest]
+required = ["uv"]
+
+[requirements.harness.pi]
+cli = "pi"
+"""
+    )
+    assert report.manifest is not None
+    requirements = report.manifest.requirements
+    assert requirements is not None and requirements.has_tools
+    assert requirements.required == ["git"]
+    assert requirements.optional == ["cargo-nextest"]
+    assert requirements.gate["pytest"].required == ["uv"]
+    assert requirements.harness["pi"].cli == "pi"
+
+
+def test_manifest_requirement_names_cannot_supply_paths_or_arguments() -> None:
+    issues = _issues(MINIMAL + '\n[requirements]\nrequired = ["/tmp/uv", "uv --version"]\n')
+    assert [location for _, location, _ in issues] == [
+        "requirements.required[0]",
+        "requirements.required[1]",
+    ]
 
 
 def test_unknown_key_fails_with_its_line() -> None:

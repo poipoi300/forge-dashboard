@@ -30,6 +30,7 @@ from forge_dashboard.core.ui import ui
 from forge_dashboard.domain import launch as launch_rules
 from forge_dashboard.domain import summary as rules
 from forge_dashboard.domain.launch import LaunchGuide
+from forge_dashboard.domain.requirements import DoctorError, read_report
 from forge_dashboard.domain.summary import (
     AgentFacts,
     CheckFacts,
@@ -44,6 +45,7 @@ from forge_dashboard.domain.summary import (
     ProjectIdentity,
     ProjectRole,
     ProjectSummary,
+    RequirementsFacts,
     ServicesFacts,
     StandardsFacts,
     UserProjectState,
@@ -58,6 +60,7 @@ if TYPE_CHECKING:
 
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _NOT_SLUG = re.compile(r"[^a-z0-9]+")
+_REQUIREMENTS_POLL_S = 300
 
 Facts = (
     ManifestFacts
@@ -70,6 +73,7 @@ Facts = (
     | StandardsFacts
     | MetricsFacts
     | AgentFacts
+    | RequirementsFacts
 )
 _FACT_FIELDS: dict[type[BaseModel], str] = {
     ManifestFacts: "manifest",
@@ -82,6 +86,7 @@ _FACT_FIELDS: dict[type[BaseModel], str] = {
     StandardsFacts: "standards",
     MetricsFacts: "metrics",
     AgentFacts: "agent",
+    RequirementsFacts: "requirements",
 }
 
 
@@ -111,6 +116,11 @@ class ProjectRecord:
     @property
     def languages(self) -> list[str]:
         return list(self.manifest.project.languages) if self.manifest is not None else []
+
+    @property
+    def has_host_tools(self) -> bool:
+        requirements = self.manifest.requirements if self.manifest is not None else None
+        return requirements is not None and requirements.has_tools
 
 
 class ProjectListener:
@@ -297,6 +307,8 @@ class ProjectsService(Service[ProjectsConfig, ProjectsState]):
         self._sync_lock = asyncio.Lock()
         self._manifest_mtimes: dict[str, float | None] = {}
         self._background = BackgroundTasks()
+        self._requirements_slots = asyncio.Semaphore(4)
+        self._requirements_running: dict[str, ProjectRecord] = {}
         discovery.on_candidates(self._candidates_changed)
         discovery.on_change(self._files_changed)
 
@@ -314,6 +326,15 @@ class ProjectsService(Service[ProjectsConfig, ProjectsState]):
             ),
             "projects-poll",
         )
+        self._background.spawn(
+            repeat(
+                self.poll_requirements,
+                lambda: _REQUIREMENTS_POLL_S,
+                label="host requirements poll",
+                first_run_after_s=_REQUIREMENTS_POLL_S,
+            ),
+            "requirements-poll",
+        )
 
     @override
     async def stop(self) -> None:
@@ -327,6 +348,10 @@ class ProjectsService(Service[ProjectsConfig, ProjectsState]):
         for record in changed:
             await self._files_changed(record.path, frozenset({"manifest"}))
         return [record.id for record in changed]
+
+    async def poll_requirements(self) -> None:
+        """Refresh host-tool health even when projects' files have not changed."""
+        await asyncio.gather(*(self._check_requirements(record) for record in self.records() if record.has_host_tools))
 
     # --- queries for other services ---
 
@@ -420,11 +445,39 @@ class ProjectsService(Service[ProjectsConfig, ProjectsState]):
         )
         base = existing or ProjectFacts(identity=identity)
         self._facts[record.id] = base.model_copy(
-            update={"identity": identity, "user": user, "manifest": manifest_facts, "v1": self._v1(record, base.issues)}
+            update={
+                "identity": identity,
+                "user": user,
+                "manifest": manifest_facts,
+                "v1": self._v1(record, base.issues),
+                "requirements": base.requirements if previous == record else None,
+            }
         )
+        if record.has_host_tools:
+            self._background.spawn(self._check_requirements(record), name=f"requirements:{record.id}")
         if previous != record:
             for listener in self._listeners:
                 await listener.project_upserted(record)
+
+    async def _check_requirements(self, record: ProjectRecord) -> None:
+        async with self._requirements_slots:
+            if self._records.get(record.id) is not record or self._requirements_running.get(record.id) is record:
+                return
+            self._requirements_running[record.id] = record
+            try:
+                report = await asyncio.to_thread(read_report, record.path / MANIFEST_FILENAME)
+            except DoctorError as error:
+                facts = RequirementsFacts(error=str(error))
+            else:
+                facts = RequirementsFacts(
+                    missing=report.missing_required,
+                    unmanaged=[tool.name for tool in report.tools if tool.required and tool.status == "unmanaged"],
+                )
+            finally:
+                if self._requirements_running.get(record.id) is record:
+                    self._requirements_running.pop(record.id)
+        if self._records.get(record.id) is record:
+            self.put(record.id, facts)
 
     def _identity(self, record: ProjectRecord) -> ProjectIdentity:
         manifest = record.manifest

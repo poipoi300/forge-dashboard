@@ -326,8 +326,14 @@ class V1Facts(BaseModel):
 # --- the composed summary ---
 
 
+class RequirementsFacts(BaseModel):
+    missing: list[str] = Field(default_factory=list)
+    unmanaged: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class HealthReason(BaseModel):
-    source: Literal["ci", "checks", "manifest", "standards", "services"]
+    source: Literal["ci", "checks", "manifest", "requirements", "standards", "services"]
     level: HealthLevel
     message: str
 
@@ -475,6 +481,7 @@ class ProjectFacts(BaseModel):
     identity: ProjectIdentity
     user: UserProjectState = Field(default_factory=UserProjectState)
     manifest: ManifestFacts | None = None
+    requirements: RequirementsFacts | None = None
     v1: V1Progress | None = None
     git: GitFacts | None = None
     checks: CheckFacts | None = None
@@ -575,6 +582,20 @@ def health_reasons(facts: ProjectFacts) -> list[HealthReason]:
         count = facts.manifest.error_count
         message = f"manifest invalid ({count} error{'s' if count != 1 else ''})"
         reasons.append(HealthReason(source="manifest", level=HealthLevel.FAILING, message=message))
+    if facts.requirements is not None:
+        requirements = facts.requirements
+        if requirements.error:
+            reasons.append(HealthReason(source="requirements", level=HealthLevel.WARN, message=requirements.error))
+        if requirements.missing:
+            names = ", ".join(requirements.missing)
+            reasons.append(
+                HealthReason(source="requirements", level=HealthLevel.FAILING, message=f"Missing host tools: {names}")
+            )
+        if requirements.unmanaged:
+            names = ", ".join(requirements.unmanaged)
+            reasons.append(
+                HealthReason(source="requirements", level=HealthLevel.WARN, message=f"Unmanaged host tools: {names}")
+            )
     if facts.standards is not None and facts.standards.total and facts.standards.passing < facts.standards.total:
         failing_count = facts.standards.total - facts.standards.passing
         message = f"{failing_count} of {facts.standards.total} standards checks not met"

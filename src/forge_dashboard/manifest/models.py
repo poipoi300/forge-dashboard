@@ -112,6 +112,7 @@ def _check_params_schema(value: dict[str, JsonValue]) -> dict[str, JsonValue]:
 
 
 Slug = Annotated[str, StringConstraints(pattern=_SLUG_PATTERN)]
+ToolName = Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$")]
 RepoPath = Annotated[
     str,
     AfterValidator(_check_repo_path),
@@ -140,6 +141,26 @@ class ManifestModel(BaseModel):
     """Base for every manifest table: unknown keys fail loudly."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+
+class RequirementTools(ManifestModel):
+    required: list[ToolName] = Field(default_factory=list)
+    optional: list[ToolName] = Field(default_factory=list)
+
+
+class HarnessRequirements(RequirementTools):
+    cli: ToolName
+
+
+class HostRequirements(RequirementTools):
+    gate: dict[Slug, RequirementTools] = Field(default_factory=dict)
+    harness: dict[Slug, HarnessRequirements] = Field(default_factory=dict)
+
+    @property
+    def has_tools(self) -> bool:
+        return bool(
+            self.required or self.optional or self.harness or any(g.required or g.optional for g in self.gate.values())
+        )
 
 
 def _placeholder_problems(
@@ -503,6 +524,7 @@ class ProjectManifest(ManifestModel):
     schema_version: Literal[1] = Field(alias="schema", description="Manifest schema version. Must be 1.")
     project: Project
     v1: V1
+    requirements: HostRequirements | None = None
     checks: list[Check] = Field(default_factory=list)
     services: list[Service] = Field(default_factory=list)
     deployments: list[Deployment] = Field(default_factory=list)

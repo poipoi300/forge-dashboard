@@ -1,14 +1,19 @@
 """The TUI runner: specs and stamps, preflight, the plain-log path, and the Textual app driven headless."""
 
 import asyncio
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from forge_dashboard.domain.requirements import DoctorError, DoctorReport, HarnessReport, ToolReport
 from forge_dashboard.runner import __main__ as runner_main
 from forge_dashboard.runner.specs import (
     API_PREFERRED_PORT,
+    REPO_ROOT,
     Stamp,
     browser_target,
     content_hash,
@@ -69,12 +74,81 @@ def test_only_selects_services_and_rejects_unknown_names() -> None:
 
 
 def test_check_reports_ok_and_exits_zero(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("shutil.which", lambda name: f"/bin/{name}")
+    bun = ToolReport(
+        name="bun",
+        status="unmanaged",
+        required=True,
+        path="/local/bun",
+        version="1.4",
+        package=None,
+        ownership_unknown=False,
+    )
+    pi = HarnessReport(cli="pi", status="unavailable", missing=("pi",))
+    report = DoctorReport(ok=True, tools=(bun,), harnesses={"pi": pi})
+
+    def read_report(manifest: Path, *, versions: bool) -> DoctorReport:
+        assert manifest == REPO_ROOT and versions
+        return report
+
+    monkeypatch.setattr(runner_main, "read_report", read_report)
     assert runner_main.main(["--check"]) == 0
-    assert capsys.readouterr().out.strip().endswith("ok")
-    monkeypatch.setattr("shutil.which", lambda _name: None)
+    output = capsys.readouterr().out
+    assert "bun: unmanaged — 1.4" in output
+    assert "harness pi: unavailable" in output
+    assert output.strip().endswith("ok")
+    report = DoctorReport(
+        ok=False, tools=(bun.model_copy(update={"status": "missing", "version": None}),), harnesses={}
+    )
     assert runner_main.main(["--check"]) == 1
-    assert "'bun' is not on PATH" in capsys.readouterr().out
+    assert "required tool 'bun' is missing" in capsys.readouterr().out
+
+
+def test_check_names_unavailable_doctor(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing(manifest: Path, *, versions: bool) -> DoctorReport:
+        raise DoctorError("Forge doctor is unavailable")
+
+    monkeypatch.setattr(runner_main, "read_report", missing)
+    assert runner_main.main(["--check"]) == 1
+    assert "problem: Forge doctor is unavailable" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the launcher requires Bash")
+def test_bash_check_forwards_preflight_failure_without_installing_tools(tmp_path: Path) -> None:
+    bash = shutil.which("bash")
+    dirname = shutil.which("dirname")
+    assert bash is not None and dirname is not None
+    (tmp_path / "bash").symlink_to(bash)
+    (tmp_path / "dirname").symlink_to(dirname)
+    uv = tmp_path / "uv"
+    uv.write_text(
+        '#!/bin/sh\ntest "$1" = --directory && test -f "$2/run.sh" || exit 22\n'
+        'shift 2\ntest "$*" = "run --no-sync -m forge_dashboard.runner --check" || exit 22\n'
+        'printf "problem: required tool bun is missing\n"\nexit 17\n',
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        (str(REPO_ROOT / "run.sh"), "--check"),
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 17
+    assert result.stdout.strip() == "problem: required tool bun is missing"
+
+    uv.unlink()
+    result = subprocess.run(
+        (str(REPO_ROOT / "run.sh"), "--check"),
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stderr.strip() == "uv is required to run dashboard preflight."
 
 
 def _status(state: ServiceState, **fields: object) -> ServiceStatus:

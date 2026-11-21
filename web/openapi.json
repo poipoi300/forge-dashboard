@@ -14876,6 +14876,39 @@
         "title": "HarnessConfig",
         "description": "How to invoke the agent CLI."
       },
+      "HarnessRequirements": {
+        "properties": {
+          "required": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+            },
+            "type": "array",
+            "title": "Required"
+          },
+          "optional": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+            },
+            "type": "array",
+            "title": "Optional"
+          },
+          "cli": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+            "title": "Cli"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "required",
+          "optional",
+          "cli"
+        ],
+        "title": "HarnessRequirements"
+      },
       "HarnessStatus": {
         "properties": {
           "available": {
@@ -14924,6 +14957,7 @@
               "ci",
               "checks",
               "manifest",
+              "requirements",
               "standards",
               "services"
             ],
@@ -15059,6 +15093,53 @@
           "dirty"
         ],
         "title": "HistoryPoint"
+      },
+      "HostRequirements": {
+        "properties": {
+          "required": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+            },
+            "type": "array",
+            "title": "Required"
+          },
+          "optional": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+            },
+            "type": "array",
+            "title": "Optional"
+          },
+          "gate": {
+            "patternProperties": {
+              "^[a-z0-9][a-z0-9-]*$": {
+                "$ref": "#/components/schemas/RequirementTools"
+              }
+            },
+            "type": "object",
+            "title": "Gate"
+          },
+          "harness": {
+            "patternProperties": {
+              "^[a-z0-9][a-z0-9-]*$": {
+                "$ref": "#/components/schemas/HarnessRequirements"
+              }
+            },
+            "type": "object",
+            "title": "Harness"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "HostRequirements",
+        "required": [
+          "required",
+          "optional",
+          "gate",
+          "harness"
+        ]
       },
       "HttpReady": {
         "properties": {
@@ -18389,6 +18470,16 @@
           "v1": {
             "$ref": "#/components/schemas/V1"
           },
+          "requirements": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostRequirements"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "checks": {
             "items": {
               "$ref": "#/components/schemas/Check"
@@ -18451,6 +18542,7 @@
           "schema",
           "project",
           "v1",
+          "requirements",
           "checks",
           "services",
           "deployments",
@@ -19764,6 +19856,33 @@
           "check_id"
         ],
         "title": "ReportInput"
+      },
+      "RequirementTools": {
+        "properties": {
+          "required": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+            },
+            "type": "array",
+            "title": "Required"
+          },
+          "optional": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$"
+            },
+            "type": "array",
+            "title": "Optional"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RequirementTools",
+        "required": [
+          "required",
+          "optional"
+        ]
       },
       "RestoreInput": {
         "properties": {

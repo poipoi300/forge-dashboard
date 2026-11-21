@@ -84,6 +84,7 @@ export function makeManifest(
       docs: null,
     },
     v1: { source: "milestones", target_date: null, github_milestone: null, milestones: [] },
+    requirements: null,
     checks: [],
     services: [],
     deployments: [],
