@@ -47,9 +47,10 @@ development; the product only changes it through user-triggered actions.
   restart, logs, stop, and quit, and a plain-log path when stdout is not a
   TTY.
 - **Launchers.** `run.ps1` and `run.cmd` (Windows) and `run.sh`
-  (macOS/Linux) are thin. They ensure uv and Bun exist, installing whatever
-  is missing, then run `uv run -m forge_dashboard.runner` and forward
-  arguments.
+  (macOS/Linux) check for uv and Bun on PATH. If either is missing, they
+  report how to install it and exit. A leading `--install-tools` opts into
+  upstream installers for missing tools. Once both tools are available, the
+  launcher runs `uv run -m forge_dashboard.runner` and forwards runner arguments.
 - **One supervisor, two hosts.** The supervisor and process modules serve
   both the TUI runner, for the dashboard's own services, and the API, for
   project services declared in manifests.
@@ -608,8 +609,8 @@ Every item holds, verified by running it, not by reading the diff.
 - All commit-stage gates and the push gate pass (set
   `DIFF_COVER_COMPARE_BRANCH` to the root commit or an equivalent baseline,
   since there is no remote).
-- From a fresh clone, `run.ps1` starts the TUI runner, which opens the WebUI
-  with zero manual steps. The WebUI lists the projects on this machine:
+- From a fresh clone with uv and Bun on PATH, `run.ps1` starts the TUI runner,
+  which opens the WebUI. The WebUI lists the projects on this machine:
   Reelcut, the dashboard itself, and forge as the standards source.
 - Every overview element shows real data for those projects. Where data
   cannot exist yet (no GitHub remote), the designed state shows instead.

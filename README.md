@@ -15,11 +15,15 @@ run.cmd            # Windows cmd
 ./run.sh           # macOS / Linux
 ```
 
-That is the only step. The launcher installs uv and Bun when they are
-missing, then starts the TUI runner, which installs dependencies, builds the
-WebUI (skipped when nothing changed), starts the API on a free port
-(preferring 8760), and opens the browser once it answers. Without a terminal
-it streams prefixed logs instead of drawing the TUI.
+Install uv and Bun with your package manager before launching. On Arch with
+arcus, add the `uv` and `bun` packages to your arcus module. If you don't
+have a package manager, pass `--install-tools` as the first argument to the
+launcher to download any missing tools from their upstream installers.
+
+The TUI runner installs project dependencies, builds the WebUI (skipped when
+nothing changed), starts the API on a free port (preferring 8760), and opens
+the browser once it answers. Without a terminal it streams prefixed logs
+instead of drawing the TUI.
 
 | Runner flag | Effect |
 |---|---|
