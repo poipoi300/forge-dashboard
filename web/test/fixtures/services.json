@@ -32824,6 +32824,126 @@
     ]
   },
   {
+    "id": "automation",
+    "title": "Automation",
+    "description": "Set the maintainer, action approvals, and provider route for each GitHub repository.",
+    "config_schema": {
+      "$defs": {
+        "RepoAutomationPolicy": {
+          "additionalProperties": false,
+          "properties": {
+            "repo": {
+              "description": "Repository from the origin remote, in owner/name form.",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$",
+              "title": "GitHub repository",
+              "type": "string",
+              "x-ui": {
+                "placeholder": "owner/name"
+              }
+            },
+            "owner": {
+              "description": "GitHub login of the maintainer for this repository.",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$",
+              "title": "Maintainer login",
+              "type": "string"
+            },
+            "enabled": {
+              "default": false,
+              "title": "Enable automation",
+              "type": "boolean"
+            },
+            "automatic_actions": {
+              "default": [],
+              "description": "Actions allowed automatically when automation is enabled. All other actions require approval.",
+              "items": {
+                "enum": [
+                  "push",
+                  "open-pull-request",
+                  "merge-branch",
+                  "create-issue",
+                  "comment",
+                  "close-issue",
+                  "reopen-issue",
+                  "set-labels",
+                  "rerun-failed-jobs",
+                  "queue-issue"
+                ],
+                "type": "string",
+                "x-ui": {
+                  "enum_labels": {
+                    "close-issue": "Close issue",
+                    "comment": "Comment",
+                    "create-issue": "Create issue",
+                    "merge-branch": "Merge branch",
+                    "open-pull-request": "Open pull request",
+                    "push": "Push",
+                    "queue-issue": "Queue issue",
+                    "reopen-issue": "Reopen issue",
+                    "rerun-failed-jobs": "Re-run failed jobs",
+                    "set-labels": "Set labels"
+                  }
+                }
+              },
+              "title": "Automatic Actions",
+              "type": "array"
+            },
+            "provider_route": {
+              "description": "Provider account to use for this repository's automated model calls.",
+              "enum": [
+                "claude",
+                "codex",
+                "grok"
+              ],
+              "title": "Provider route",
+              "type": "string",
+              "x-ui": {
+                "enum_labels": {
+                  "claude": "Claude",
+                  "codex": "Codex",
+                  "grok": "Grok"
+                }
+              }
+            }
+          },
+          "required": [
+            "repo",
+            "owner",
+            "provider_route"
+          ],
+          "title": "RepoAutomationPolicy",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "repositories": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RepoAutomationPolicy"
+          },
+          "title": "Repositories",
+          "type": "array",
+          "x-ui": {
+            "columns": [
+              "repo",
+              "enabled"
+            ]
+          }
+        }
+      },
+      "title": "AutomationConfig",
+      "type": "object"
+    },
+    "state_schema": {
+      "description": "Input of an action that takes no parameters.",
+      "properties": {},
+      "title": "NoInput",
+      "type": "object"
+    },
+    "actions": [],
+    "events": []
+  },
+  {
     "id": "settings",
     "title": "Settings",
     "description": "Editor, terminal, and file-manager launchers, backup and restore, and report export.",

@@ -5793,6 +5793,87 @@
         }
       }
     },
+    "/api/services/automation/config": {
+      "get": {
+        "tags": [
+          "automation"
+        ],
+        "summary": "Endpoint",
+        "operationId": "automation_get_config",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationConfig"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "automation"
+        ],
+        "summary": "Endpoint",
+        "operationId": "automation_put_config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services/automation/state": {
+      "get": {
+        "tags": [
+          "automation"
+        ],
+        "summary": "Endpoint",
+        "operationId": "automation_get_state",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoInputSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/services/settings/config": {
       "get": {
         "tags": [
@@ -7892,6 +7973,27 @@
           "none"
         ],
         "title": "AuthSource"
+      },
+      "AutomationConfig": {
+        "properties": {
+          "repositories": {
+            "items": {
+              "$ref": "#/components/schemas/RepoAutomationPolicy"
+            },
+            "type": "array",
+            "title": "Repositories",
+            "default": [],
+            "x-ui": {
+              "columns": [
+                "repo",
+                "enabled"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AutomationConfig"
       },
       "BackupInfo": {
         "properties": {
@@ -17258,6 +17360,23 @@
         "title": "NoInput",
         "description": "Input of an action that takes no parameters."
       },
+      "NoInputSnapshot": {
+        "properties": {
+          "rev": {
+            "type": "integer",
+            "title": "Rev"
+          },
+          "state": {
+            "$ref": "#/components/schemas/NoInput"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rev",
+          "state"
+        ],
+        "title": "NoInputSnapshot"
+      },
       "NoReady": {
         "properties": {
           "kind": {
@@ -19530,6 +19649,90 @@
           "project_id"
         ],
         "title": "RefreshInput"
+      },
+      "RepoAutomationPolicy": {
+        "properties": {
+          "repo": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$",
+            "title": "GitHub repository",
+            "description": "Repository from the origin remote, in owner/name form.",
+            "x-ui": {
+              "placeholder": "owner/name"
+            }
+          },
+          "owner": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$",
+            "title": "Maintainer login",
+            "description": "GitHub login of the maintainer for this repository."
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enable automation",
+            "default": false
+          },
+          "automatic_actions": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "push",
+                "open-pull-request",
+                "merge-branch",
+                "create-issue",
+                "comment",
+                "close-issue",
+                "reopen-issue",
+                "set-labels",
+                "rerun-failed-jobs",
+                "queue-issue"
+              ],
+              "x-ui": {
+                "enum_labels": {
+                  "close-issue": "Close issue",
+                  "comment": "Comment",
+                  "create-issue": "Create issue",
+                  "merge-branch": "Merge branch",
+                  "open-pull-request": "Open pull request",
+                  "push": "Push",
+                  "queue-issue": "Queue issue",
+                  "reopen-issue": "Reopen issue",
+                  "rerun-failed-jobs": "Re-run failed jobs",
+                  "set-labels": "Set labels"
+                }
+              }
+            },
+            "type": "array",
+            "title": "Automatic Actions",
+            "description": "Actions allowed automatically when automation is enabled. All other actions require approval.",
+            "default": []
+          },
+          "provider_route": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "codex",
+              "grok"
+            ],
+            "title": "Provider route",
+            "description": "Provider account to use for this repository's automated model calls.",
+            "x-ui": {
+              "enum_labels": {
+                "claude": "Claude",
+                "codex": "Codex",
+                "grok": "Grok"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "repo",
+          "owner",
+          "provider_route"
+        ],
+        "title": "RepoAutomationPolicy"
       },
       "RepoState": {
         "properties": {
