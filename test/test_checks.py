@@ -197,6 +197,38 @@ def _manifest_with_checks(make_project: Callable[..., Path], name: str = "Alpha"
     return make_project(name, manifest=MANIFEST + CHECKS, extra=extra)
 
 
+async def test_manifest_checks_receive_declared_env_without_ambient_secrets(
+    checks_env: tuple[ChecksService, ProjectsService, DiscoveryService, JobsService, SchedulerService, Runtime],
+    make_project: Callable[..., Path],
+    secret_env: tuple[str, ...],
+) -> None:
+    checks, _projects, discovery, jobs, _scheduler, _runtime = checks_env
+    manifest = (
+        MANIFEST
+        + f"""
+[[checks]]
+id = "probe"
+label = "Environment probe"
+argv = ["{PYTHON}", "probe.py"]
+env = {{ PROBE_SETTING = "declared" }}
+"""
+    )
+    probe = (
+        "import os\n"
+        "assert os.environ['PROBE_SETTING'] == 'declared'\n"
+        "assert os.environ['FORGE_PROJECT_ID'] == 'alpha'\n"
+        "assert 'PATH' in os.environ\n"
+        f"assert os.environ.keys().isdisjoint({secret_env!r})\n"
+    )
+    alpha = make_project("Alpha", manifest=manifest, extra={"probe.py": probe})
+    await discovery.add_project(PathInput(path=str(alpha)))
+    await wait_for(lambda: checks.project_checks("alpha") is not None)
+
+    final = await jobs.wait((await checks.run(RunChecksInput(project_id="alpha", check_id="probe"))).job_id)
+
+    assert final.status is JobStatus.SUCCEEDED
+
+
 async def test_runs_record_results_publish_facts_and_detect_regressions(
     checks_env: tuple[ChecksService, ProjectsService, DiscoveryService, JobsService, SchedulerService, Runtime],
     make_project: Callable[..., Path],

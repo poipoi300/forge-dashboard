@@ -512,7 +512,7 @@ class DiscoveryService(Service[DiscoveryConfig, DiscoveryState]):
             # The URL may embed a token: the log shows it redacted, and git still gets the real one.
             context.log(f"$ git clone --progress {redact_url(request.url)} {target}")
             result = await context.run(
-                ["git", "clone", "--progress", "--", request.url, str(target)], root, gitops.NON_INTERACTIVE, echo=False
+                ["git", "clone", "--progress", "--", request.url, str(target)], root, gitops.transport_env(), echo=False
             )
             if not result.ok:
                 return JobOutcome(status=JobStatus.FAILED, summary=f"git clone exited {result.exit_code}")

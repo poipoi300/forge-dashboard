@@ -13,6 +13,7 @@ are checked against `git remote`, and branches against `refs/heads`.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
@@ -35,8 +36,10 @@ class GitError(ActionError):
     """A git command failed; the message carries git's own stderr."""
 
 
-def git_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    return tree.child_env({**NON_INTERACTIVE, **(extra or {})})
+def transport_env() -> dict[str, str]:
+    """Extra job settings for Git network operations using a local SSH agent."""
+    socket = os.environ.get("SSH_AUTH_SOCK")
+    return {**NON_INTERACTIVE, "SSH_AUTH_SOCK": socket} if socket else dict(NON_INTERACTIVE)
 
 
 async def run(
@@ -49,14 +52,15 @@ async def run(
 ) -> tree.CompletedRun:
     """Run `git -C repo <args>`; raise `GitError` on failure unless `check` is False.
 
+    Pass a complete base environment via `env` to override inheritance.
+
     Raises:
         GitError: when `repo` is not a directory, or git fails and `check` is set.
     """
     if not repo.is_dir():
         raise GitError(f"{repo} is not a directory")
-    result = await tree.run(
-        ["git", "-C", str(repo), *CONFIG, *args], repo, git_env(env), timeout_s=timeout_s, stdin=stdin
-    )
+    git_env = {**(tree.child_env() if env is None else env), **NON_INTERACTIVE}
+    result = await tree.run(["git", "-C", str(repo), *CONFIG, *args], repo, git_env, timeout_s=timeout_s, stdin=stdin)
     if check and not result.ok:
         raise GitError(f"git {args[0]} failed: {failure_reason(result)}")
     return result

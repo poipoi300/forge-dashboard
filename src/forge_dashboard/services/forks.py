@@ -42,6 +42,7 @@ from forge_dashboard.domain.gitparse import Commit, redact_url
 from forge_dashboard.domain.harness import RunResult
 from forge_dashboard.domain.scheduling import ManualSchedule
 from forge_dashboard.domain.summary import ForkFacts
+from forge_dashboard.process import tree
 from forge_dashboard.services.agents import AgentsService, base_branch_of
 from forge_dashboard.services.checks import ChecksService
 from forge_dashboard.services.discovery import ChangeKind
@@ -586,7 +587,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
                 fetched = await context.run(
                     ["git", "-C", str(record.path), "fetch", "--prune", remote],
                     record.path,
-                    gitops.NON_INTERACTIVE,
+                    gitops.transport_env(),
                     timeout_s=600,
                 )
                 if not fetched.ok:
@@ -739,8 +740,9 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
             parse_problem = rules.parse_problems(target, text)
             if parse_problem is not None:
                 problems.append(parse_problem)
-        await gitops.run(path, "add", "--", *files)
-        check = await gitops.run(path, "diff", "--cached", "--check", "--", *files, check=False)
+        env = tree.minimal_env()
+        await gitops.run(path, "add", "--", *files, env=env)
+        check = await gitops.run(path, "diff", "--cached", "--check", "--", *files, env=env, check=False)
         if check.exit_code not in (0, None) and check.stdout.strip():
             problems.append(f"git diff --check:\n{check.stdout.strip()}")
         return "\n".join(problems) or None
@@ -812,7 +814,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
                 "-m",
                 note,
                 "HEAD",
-                env=await worktrees.identity_env(path),
+                env=tree.minimal_env(await worktrees.identity_env(path)),
             )
         result_sha = (await gitops.output(path, "rev-parse", "HEAD")).strip()
         sync.run = await self._save(sync.run.model_copy(update={"result_sha": result_sha}))
@@ -854,7 +856,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
             pushed = await context.run(
                 ["git", "-C", str(record.path), "push", *lease, "origin", run.target_branch],
                 record.path,
-                gitops.NON_INTERACTIVE,
+                gitops.transport_env(),
                 timeout_s=600,
             )
             sync.run = await self._save(sync.run.model_copy(update={"pushed": pushed.ok}))
@@ -1016,7 +1018,7 @@ class ForksService(Service[ForksConfig, ForksState], ProjectListener):
                     )
                 if sync.run.result_sha is None:
                     if present:
-                        await gitops.run(path, "add", "--", *present)
+                        await gitops.run(path, "add", "--", *present, env=tree.minimal_env())
                     step = await self._continue(context, sync)
                     if step.failure is not None:
                         return await self._fail_integration(context, sync, step.failure)

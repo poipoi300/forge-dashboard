@@ -7,22 +7,27 @@ record with cost, turns, and duration.
 
 Modes, chosen by markers the dashboard's briefs carry:
 - "# Conflict brief": resolve every conflicted file listed as `### File: <path>`
-  by keeping ours then theirs. With FAKE_HARNESS_SABOTAGE_FIRST=1 the first
+  by keeping ours then theirs. With --sabotage-first the first
   attempt (a brief without "Previous attempt") leaves the markers in place.
 - "# Bring up to standards": copy forge's AGENTS.md (between FORGE_AGENTS_MD
   markers) over the project's, append forge's .gitignore lines, add a README
   setup section, and set [forge].template_revision.
 - "# Adopt": write forge.project.toml (invalid first when sabotaged).
 - anything else: write AGENT_WAS_HERE.md.
-With FAKE_HARNESS_EXIT=<n> it exits with that code after printing an error result.
+With --exit-code <n> it exits with that code after printing an error result.
 """
 
+import argparse
 import json
-import os
 import re
 import sys
 import time
 from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--sabotage-first", action="store_true")
+parser.add_argument("--exit-code", type=int, default=0)
+options, _ = parser.parse_known_args()
 
 prompt = sys.stdin.read()
 cwd = Path.cwd()
@@ -57,7 +62,7 @@ def between(marker: str) -> str | None:
 CONFLICT = re.compile(r"^<<<<<<< [^\n]*\n(.*?)^=======\n(.*?)^>>>>>>> [^\n]*\n", re.MULTILINE | re.DOTALL)
 
 emit({"type": "system", "subtype": "init", "model": "fake-harness", "session_id": "fake"})
-sabotage = os.environ.get("FAKE_HARNESS_SABOTAGE_FIRST") == "1" and "Previous attempt" not in prompt
+sabotage = options.sabotage_first and "Previous attempt" not in prompt
 
 if "# Conflict brief" in prompt:
     say("Resolving conflicts by keeping both sides.")
@@ -113,7 +118,7 @@ else:
     (cwd / "AGENT_WAS_HERE.md").write_text("# Done\n\n" + prompt.splitlines()[0] + "\n", encoding="utf-8", newline="\n")
     tool("Write", "AGENT_WAS_HERE.md")
 
-exit_code = int(os.environ.get("FAKE_HARNESS_EXIT", "0"))
+exit_code = options.exit_code
 emit(
     {
         "type": "result",
