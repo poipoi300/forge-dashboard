@@ -387,9 +387,12 @@ class StandardsService(Service[StandardsConfig, StandardsState], ProjectListener
             text = agents.read_text(encoding="utf-8")
             manifest_now = load_manifest(worktree).manifest
             recorded = manifest_now.forge.template_revision if manifest_now and manifest_now.forge else None
-            versions = [forge.rule_sections_at(rev) for rev in (revision, recorded) if rev is not None]
-            linked = rules.apply_rule_links(
-                text, slug, revision, self.config.travelling_sections, [version for version in versions if version]
+            target = forge.rule_sections_at(revision)
+            previous = forge.rule_sections_at(recorded) if recorded and rules.is_revision(recorded) else None
+            linked = (
+                rules.apply_rule_links(text, slug, revision, self.config.travelling_sections, target, previous)
+                if target is not None
+                else text
             )
             if linked != text:
                 agents.write_text(linked, encoding="utf-8", newline="\n")

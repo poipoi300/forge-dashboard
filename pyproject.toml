@@ -14,6 +14,7 @@ dependencies = [
     "jsonpatch>=1.33",
     "jsonschema>=4.25",
     "keyring>=25.6",
+    "markdown-it-py>=4.2",
     "platformdirs>=4.3",
     "pre-commit>=4.0",
     "psutil>=7.0",

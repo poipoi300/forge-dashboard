@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 import yaml
+from markdown_it import MarkdownIt
 from pydantic import BaseModel, Field
 
 from forge_dashboard.core.ui import ui
@@ -47,11 +48,10 @@ _GITHUB_REMOTE = re.compile(
     r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+/[^/]+?)(?:\.git)?/?"
 )
 _SECTION = re.compile(r"## (.+?)\s*$")
-_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
-_INLINE_CODE = re.compile(r"(`+)(?!`).*?(?<!`)\1(?!`)", re.DOTALL)
+_MARKDOWN = MarkdownIt("commonmark")
+_LEGACY_REVISION = re.compile(r"[0-9a-f]{7,40}")
 # pre-commit still accepts the old stage names and normalizes them.
 _LEGACY_STAGES = {"commit": "pre-commit", "push": "pre-push", "merge-commit": "pre-merge-commit"}
-_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 RULES_SECTION = "Working rules from forge"
 # pre-commit runs a hook that ends up with no stages at every stage.
 EVERY_STAGE = ("every stage",)
@@ -86,34 +86,23 @@ class ComplianceReport(BaseModel):
         return [check for check in self.checks if check.result == "fail"]
 
 
-def _fenced(lines: Iterable[str]) -> list[bool]:
-    """Whether each line belongs to a fenced code block (fence lines included)."""
-    flags: list[bool] = []
-    fence: str | None = None
-    for line in lines:
-        marker = _FENCE.match(line.rstrip("\r\n"))
-        if fence is None and marker is not None:
-            fence = marker.group(1)
-            flags.append(True)
-            continue
-        flags.append(fence is not None)
-        # CommonMark: a fence closes on the same character, at least as long, with nothing after it.
-        if fence and marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence):
-            fence = None if not marker.group(2).strip(" \t") else fence
-    return flags
-
-
 def _section_spans(markdown: str) -> list[tuple[str | None, int, int]]:
-    """`(heading, start, end)` of each `## ` section outside fenced code; the preamble has heading None."""
-    lines = markdown.splitlines(keepends=True)
-    starts: list[tuple[str | None, int]] = [(None, 0)]
-    offset = 0
-    for line, fenced in zip(lines, _fenced(lines), strict=True):
-        if not fenced and (heading := _SECTION.match(line.rstrip("\r\n"))):
-            starts.append((heading.group(1), offset))
-        offset += len(line)
-    ends = [start for _, start in starts[1:]] + [len(markdown)]
-    return [(name, start, end) for (name, start), end in zip(starts, ends, strict=True)]
+    """`(heading, start, end)` of each level-2 section as CommonMark parses it; other spans have heading None.
+
+    A section runs from its `##` (or setext) heading to the next level-1 or
+    level-2 heading; headings inside code blocks are not headings.
+    """
+    starts = [0]
+    for line in markdown.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    tokens = _MARKDOWN.parse(markdown)
+    boundaries: list[tuple[str | None, int]] = [(None, 0)]
+    for index, token in enumerate(tokens):
+        if token.type == "heading_open" and token.tag in {"h1", "h2"} and token.map is not None:
+            name = tokens[index + 1].content.strip() if token.tag == "h2" else None
+            boundaries.append((name, starts[token.map[0]]))
+    ends = [start for _, start in boundaries[1:]] + [len(markdown)]
+    return [(name, start, end) for (name, start), end in zip(boundaries, ends, strict=True) if end > start]
 
 
 def sections(markdown: str) -> dict[str, str]:
@@ -356,6 +345,11 @@ def _workflow_pins(project: Path, slug: str) -> list[str]:
     return pins
 
 
+def is_revision(value: str) -> bool:
+    """Whether a recorded template revision is a commit ID git can look up (abbreviated ones included)."""
+    return _LEGACY_REVISION.fullmatch(value) is not None
+
+
 def rule_links(slug: str, revision: str, travelling: Iterable[str]) -> str:
     """The AGENTS.md section linking forge's working-rule sections at a revision."""
     base = f"https://github.com/{slug}/blob/{revision}/AGENTS.md"
@@ -363,26 +357,22 @@ def rule_links(slug: str, revision: str, travelling: Iterable[str]) -> str:
     return f"## {RULES_SECTION}\n\n{lines}"
 
 
-def _visible(markdown: str) -> str:
-    lines = _COMMENT.sub("", markdown).splitlines(keepends=True)
-    shown = "".join(line for line, fenced in zip(lines, _fenced(lines), strict=True) if not fenced)
-    return _INLINE_CODE.sub("", shown)
+def _link_targets(markdown: str) -> list[str]:
+    """Destinations of the links the Markdown renders (inline, autolinks and used references; not images or code)."""
+    return [
+        str(child.attrGet("href"))
+        for token in _MARKDOWN.parse(markdown)
+        for child in token.children or []
+        if child.type == "link_open"
+    ]
 
 
 def _linked_revisions(agents: str, slug: str, name: str) -> list[str]:
     """The forge SHAs at which AGENTS.md links section `name` as a rendered link."""
-    visible = _visible(agents)
-    url = rf"https://github\.com/(?i:{re.escape(slug)})/blob/([0-9a-f]{{40}})/AGENTS\.md#{re.escape(section_anchor(name))}"
-    revisions = [match.group(1) for match in re.finditer(rf"(?:\]\(\s*<?|<){url}(?=[>)\s])", visible)]
-    for definition in re.finditer(rf"^[ ]{{0,3}}\[([^\]\n]+)\]:[ \t]*<?{url}(?=[>\s]|$)", visible, re.MULTILINE):
-        label = re.escape(definition.group(1))
-        # A reference definition renders nothing unless a link uses its label.
-        if re.search(
-            rf"(?<!!)\[[^\]\n]*\]\[(?i:{label})\]|(?<![!\]])\[(?i:{label})\](?![:(\[])",
-            visible[: definition.start()] + visible[definition.end() :],
-        ):
-            revisions.append(definition.group(2))
-    return revisions
+    pattern = re.compile(
+        rf"https://github\.com/(?i:{re.escape(slug)})/blob/([0-9a-f]{{40}})/AGENTS\.md#{re.escape(section_anchor(name))}"
+    )
+    return [match.group(1) for target in _link_targets(agents) if (match := pattern.fullmatch(target))]
 
 
 def _missing_rule_links(agents: str, slug: str, travelling: Iterable[str], forge: ForgeSource) -> list[str]:
@@ -434,7 +424,8 @@ def evaluate(
     # 2-3. AGENTS.md, linking forge's working-rule sections
     agents = _read(project / "AGENTS.md")
     slug = forge.slug()
-    theirs = sections(forge.text("AGENTS.md") or "")
+    forge_agents = forge.text("AGENTS.md")
+    theirs = sections(forge_agents or "")
     rule_names = [name for name in travelling_sections if name in theirs]
     add(
         "agents-md",
@@ -448,6 +439,8 @@ def evaluate(
         add("agents-sections", links_title, "fail", "deterministic", "no AGENTS.md")
     elif slug is None:
         add("agents-sections", links_title, "fail", "deterministic", "forge's checkout has no GitHub origin remote")
+    elif forge_agents is None:
+        add("agents-sections", links_title, "fail", "deterministic", "forge's AGENTS.md cannot be read")
     else:
         ours = sections(agents)
         copied = [name for name in rule_names if name in ours and _same_text(ours[name], theirs[name])]
@@ -645,19 +638,25 @@ def evaluate(
 
 
 def apply_rule_links(
-    agents_text: str, slug: str, revision: str, travelling: Iterable[str], forge_versions: Iterable[dict[str, str]]
+    agents_text: str,
+    slug: str,
+    revision: str,
+    travelling: Iterable[str],
+    target: dict[str, str],
+    recorded: dict[str, str] | None = None,
 ) -> str:
     """Drop copies of forge's working-rule sections and link them at `revision` instead.
 
-    A section is a copy when its text matches forge's at one of `forge_versions`
-    (the revision being aligned to, and the one the project last aligned to),
-    ignoring whitespace; a project's own section under one of those headings stays for a
-    person to resolve. The links live in one generated section, recognised by its
-    heading and its link-only body and replaced on each alignment. Everything else
+    Only sections forge has at `revision` (`target`) are linked or removed. A
+    section is a copy when its text matches forge's at the target or at the
+    revision the project last aligned to (`recorded`), ignoring whitespace; a
+    project's own section under one of those headings stays for a person to
+    resolve. The links live in one generated section, recognised by its heading
+    and its link-only body and replaced on each alignment. Everything else
     is left byte for byte.
     """
-    names = list(travelling)
-    versions = list(forge_versions)
+    names = [name for name in travelling if name in target]
+    versions = [target, *([recorded] if recorded else [])]
 
     def dropped(name: str | None, text: str) -> bool:
         if name in names:
